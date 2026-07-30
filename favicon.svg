@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Flowboard">
+  <!-- Matches canvas drawBallFace: yellow/blue water polo ball -->
+  <defs>
+    <clipPath id="ball">
+      <circle cx="32" cy="32" r="30"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#ball)">
+    <rect width="64" height="64" fill="#f0b429"/>
+    <!-- Blue panel bands between seams -->
+    <path fill="#1a3055" d="M8.46 13.4 Q32 11.6 55.54 13.4 L61.51 26.6 Q32 26 2.49 26.6 Z"/>
+    <path fill="#1a3055" d="M2.49 37.4 Q32 38 61.51 37.4 L55.54 50.6 Q32 52.4 8.46 50.6 Z"/>
+    <!-- Horizontal seams -->
+    <g fill="none" stroke="#0b1220" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8.46 13.4 Q32 11.6 55.54 13.4"/>
+      <path d="M2.49 26.6 Q32 26 61.51 26.6"/>
+      <path d="M2.49 37.4 Q32 38 61.51 37.4"/>
+      <path d="M8.46 50.6 Q32 52.4 55.54 50.6"/>
+    </g>
+    <!-- Vertical seams -->
+    <g fill="none" stroke="#0b1220" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M15.5 2 L15.5 13.4"/>
+      <path d="M32 2 L32 13.4"/>
+      <path d="M48.5 2 L48.5 13.4"/>
+      <path d="M10.4 13.4 Q12.2 20 10.4 26.6"/>
+      <path d="M53.6 13.4 Q51.8 20 53.6 26.6"/>
+      <path d="M10.4 37.4 Q12.2 44 10.4 50.6"/>
+      <path d="M53.6 37.4 Q51.8 44 53.6 50.6"/>
+      <path d="M15.5 50.6 L15.5 62"/>
+      <path d="M32 50.6 L32 62"/>
+      <path d="M48.5 50.6 L48.5 62"/>
+    </g>
+  </g>
+  <circle cx="32" cy="32" r="30" fill="none" stroke="#0b1220" stroke-width="4.2"/>
+</svg>

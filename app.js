@@ -742,7 +742,9 @@
     if (!getPrimarySegment(entityId)) return;
     recordHistory();
     getTrackForEntity(entityId).segments = [];
+    if (entityId !== 'ball') retargetBallRouteForLinkedBoat(entityId);
     recomputeAllSegmentDurations();
+    if (entityId === 'ball') refreshAllBoatBallClaims();
     state.tactic.updatedAt = new Date().toISOString();
     clearPointerInteraction();
     renderAll();
@@ -838,9 +840,29 @@
     return bestArc;
   }
 
+  function isFreeBallRoute(ballSeg) {
+    return !!(ballSeg && (!ballSeg.passType || ballSeg.passType === 'free'));
+  }
+
+  function getFreeBallArrivalTime(routes) {
+    var ballSeg = routes && routes.ball;
+    if (!isFreeBallRoute(ballSeg)) return 0;
+    return (ballSeg.throwDelay || 0) + (ballSeg.travelDuration || 0);
+  }
+
+  function getClaimableLooseBallPose() {
+    var ballSeg = getPrimarySegment('ball');
+    if (ballSeg) {
+      if (!isFreeBallRoute(ballSeg)) return null;
+      return clone(ballSeg.endPose);
+    }
+    return getBallStartPose();
+  }
+
   function getBallClaimAtTime(routes, localTime, motionOptsByEntity) {
     if (!routes) return null;
     var claim = null;
+    var freeBallArrival = getFreeBallArrivalTime(routes);
     Object.keys(routes).forEach(function (entityId) {
       if (entityId === 'ball') return;
       var seg = routes[entityId];
@@ -850,7 +872,8 @@
       var claimArc = seg.claimArcDistance != null ? seg.claimArcDistance : 0;
       var motionOpts = motionOptsByEntity && motionOptsByEntity[entityId];
       var claimTime = localTimeAtArcDistance(seg, claimArc, entity, motionOpts, seg.endTime);
-      if (localTime >= claimTime - 1e-6) {
+      var effectiveClaimTime = Math.max(claimTime, freeBallArrival);
+      if (localTime >= effectiveClaimTime - 1e-6) {
         claim = { entityId: entityId, segment: seg, claimArc: claimArc, entity: entity };
       }
     });
@@ -876,7 +899,7 @@
   }
 
   function updateBallClaimOnRoute(entityId, boatPose) {
-    if (!canEdit() || hasBallRoute()) return false;
+    if (!canEdit()) return false;
     var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
     if (!entity || entity.type !== 'boat') return false;
     var segment = getPrimarySegment(entityId);
@@ -888,8 +911,8 @@
       return false;
     }
     var pose = boatPose || getBoatTargetPose(entityId);
-    var ballPose = getBallStartPose();
-    if (!isPoseNearBall(ballPose, pose)) {
+    var ballPose = getClaimableLooseBallPose();
+    if (!ballPose || !isPoseNearBall(ballPose, pose)) {
       delete segment.claimsBall;
       delete segment.claimArcDistance;
       delete segment.claimBallPose;
@@ -901,6 +924,13 @@
     segment.claimBallPose = clone(ballPose);
     state.tactic.updatedAt = new Date().toISOString();
     return true;
+  }
+
+  function refreshAllBoatBallClaims() {
+    state.tactic.entities.forEach(function (entity) {
+      if (entity.type !== 'boat') return;
+      updateBallClaimOnRoute(entity.id);
+    });
   }
 
   function claimBallPossessionImmediate(entityId, boatPose, ballRefPose) {
@@ -939,9 +969,10 @@
   function getBoatTargetPose(boatId) {
     var segment = getPrimarySegment(boatId);
     if (segment) return clone(segment.endPose);
-    var poses = getPosesAtTime();
     var entity = state.tactic.entities.find(function (item) { return item.id === boatId; });
-    return clone(poses[boatId] || (entity && entity.initial) || { x: 0, y: 0, rotation: 0 });
+    // Geen getPosesAtTime() hier: die roept syncLinkedBallRouteGeometry aan, die weer
+    // getBoatTargetPose gebruikt — oneindige recursie bij een pass naar een stilstaande boot.
+    return clone((entity && entity.initial) || { x: 0, y: 0, rotation: 0 });
   }
 
   function getHolderTeam(holderId) {
@@ -1100,6 +1131,7 @@
           targetPose: clone(hit.pose),
           syncToEntityId: entity.id,
           syncArcDistance: hit.arcDistance,
+          syncPathProgress: hit.t,
           passType: 'route',
         };
       }
@@ -1128,6 +1160,7 @@
         targetEntityId: passTarget.boatId,
         syncToEntityId: passTarget.syncToEntityId,
         syncArcDistance: passTarget.syncArcDistance,
+        syncPathProgress: passTarget.syncPathProgress,
       });
       if (passTarget.syncToEntityId && !getPrimarySegment(passTarget.syncToEntityId)) {
         setMessage(t('message.syncNoBoatRoute'));
@@ -1147,7 +1180,9 @@
   function resolveBallHolderAfterRoutes(routes, prevHolderId) {
     var ballSeg = routes && routes.ball;
     if (ballSeg) {
-      if (ballSeg.passType === 'free') return null;
+      if (isFreeBallRoute(ballSeg)) {
+        return resolveBallClaimHolder(routes);
+      }
       if (ballSeg.syncToEntityId) return ballSeg.syncToEntityId;
       if (ballSeg.targetEntityId) return ballSeg.targetEntityId;
       return null;
@@ -1273,7 +1308,7 @@
   }
 
   function triggerImportDialog() {
-    if (!canEdit()) return;
+    if (!canEdit() || !isOnStartStep() || state.startPoseEdit) return;
     var input = document.getElementById('import-tactic-input');
     if (input) input.click();
   }
@@ -1650,13 +1685,10 @@
           }
           return;
         }
-        var progress = segment.endTime <= 0
-          ? 1
-          : clamp(localTime / segment.endTime, 0, 1);
         var motionOpts = motionOptsByEntity[entity.id];
         var pathT = entity.type === 'ball'
           ? ballSegmentPathProgress(segment, localTime)
-          : segmentPathProgress(segment, progress, entity, motionOpts);
+          : boatPathProgressAtLocalTime(segment, localTime, entity, motionOpts);
         poses[entity.id] = poseAlongSegment(segment, pathT, entity);
       });
       var step = state.tactic.steps[transition.stepIndex];
@@ -2300,23 +2332,22 @@
       goBtn.title = withShortcut(t('steps.go'), 'Space / G');
     }
     if (hint) {
+      var hintText = '';
       if (state.startPoseEdit) {
-        hint.textContent = t('steps.hint.startEdit');
+        hintText = t('steps.hint.startEdit');
       } else if (previewing) {
-        hint.textContent = state.transport.playing
+        hintText = state.transport.playing
           ? t('steps.hint.playing')
           : t('steps.hint.playback');
       } else if (state.isPlaying) {
-        hint.textContent = t('steps.hint.moving');
+        hintText = t('steps.hint.moving');
       } else if (reviewing) {
-        hint.textContent = t('steps.hint.review');
+        hintText = t('steps.hint.review');
       } else if (drafting) {
-        hint.textContent = t('steps.hint.draft');
-      } else if (hasPlayableSteps()) {
-        hint.textContent = t('steps.hint.hasSteps');
-      } else {
-        hint.textContent = t('steps.hint.default');
+        hintText = t('steps.hint.draft');
       }
+      hint.textContent = hintText;
+      hint.classList.toggle('hidden', !hintText);
     }
     updateTransportBar();
     updateSheetPeekSummary();
@@ -2382,7 +2413,9 @@
     var resetBtn = document.getElementById('btn-reset-all');
     if (resetBtn) resetBtn.disabled = !editable;
     var importBtn = document.getElementById('btn-import-tactic');
-    if (importBtn) importBtn.disabled = !editable;
+    if (importBtn) {
+      importBtn.title = withShortcut(t('settings.import'), modShortcutLabel() + '+O');
+    }
     if (indicator) {
       var set = hasStartPosition();
       indicator.classList.toggle('is-set', set);
@@ -2396,8 +2429,10 @@
     var settingsBtn = document.getElementById('btn-settings');
     if (settingsBtn) settingsBtn.title = withShortcut(t('header.settings'), 'S');
     var exportBtn = document.getElementById('btn-export-tactic');
-    if (exportBtn) exportBtn.title = withShortcut(t('settings.export'), modShortcutLabel() + '+S');
-    if (importBtn) importBtn.title = withShortcut(t('settings.import'), modShortcutLabel() + '+O');
+    if (exportBtn) {
+      exportBtn.classList.toggle('hidden', !hasPlayableSteps());
+      exportBtn.title = withShortcut(t('settings.export'), modShortcutLabel() + '+S');
+    }
     renderStepsPanel();
   }
 
@@ -2979,19 +3014,388 @@
     return arcData.total;
   }
 
-  function getDribbleThrowDistance() {
-    return kmhToMs(getSettings().boatSpeed) * DRIBBLE_AHEAD_SECONDS;
+  function getDribbleThrowDistance(boatSegment) {
+    var fallback = kmhToMs(getSettings().boatSpeed) * DRIBBLE_AHEAD_SECONDS;
+    if (!boatSegment) return fallback;
+    if (hasBoatCatchPace(boatSegment)) {
+      // Na de vangst vaart de speler op normaal tempo.
+      return fallback;
+    }
+    var motionDuration = Math.max(0, (boatSegment.endTime || 0) - (boatSegment.startTime || 0));
+    if (motionDuration <= 1e-6) return fallback;
+    var pathLength = getSegmentArcData(boatSegment).total;
+    if (pathLength <= 1e-6) return fallback;
+    // Afstand ≈ DRIBBLE_AHEAD_SECONDS varen op het staptempo van deze route.
+    return (pathLength / motionDuration) * DRIBBLE_AHEAD_SECONDS;
   }
 
+  // Laatste volle landings-arc; daarna alleen meenemen (rest < throwDistance).
   function getDribbleDriveStart(pathLength, throwDistance) {
-    return Math.max(0, pathLength - throwDistance);
+    if (throwDistance <= 1e-6 || pathLength <= throwDistance) return 0;
+    return Math.floor(pathLength / throwDistance + 1e-9) * throwDistance;
+  }
+
+  function getDribbleStartArcForEntity(entityId, boatSegment) {
+    boatSegment = boatSegment || getPrimarySegment(entityId);
+    if (!entityId || !boatSegment) return null;
+
+    var ballSeg = getPrimarySegment('ball');
+    if (ballSeg && ballSeg.syncToEntityId === entityId) {
+      if (ballSeg.syncPathProgress != null) {
+        refreshRoutePassArcDistance(ballSeg, boatSegment);
+      }
+      if (ballSeg.syncArcDistance != null) {
+        return ballSeg.syncArcDistance;
+      }
+    }
+
+    if (boatSegment.claimsBall && (!ballSeg || isFreeBallRoute(ballSeg))) {
+      return boatSegment.claimArcDistance != null ? boatSegment.claimArcDistance : 0;
+    }
+
+    if (getBallHolderId() === entityId && isDribbleActive(entityId)) {
+      return 0;
+    }
+
+    return null;
+  }
+
+  function clearBoatCatchPace(segment) {
+    if (!segment) return;
+    delete segment.catchMeetArc;
+    delete segment.catchMeetTime;
+    delete segment.catchAfterDuration;
+    delete segment.catchApproachSpeed;
+  }
+
+  function hasBoatCatchPace(segment) {
+    return !!(segment
+      && segment.catchMeetTime != null
+      && segment.catchMeetArc != null);
+  }
+
+  function pathProgressAtArcDistance(arcData, targetArc) {
+    targetArc = clamp(targetArc, 0, arcData.total);
+    if (targetArc <= 0) return 0;
+    if (targetArc >= arcData.total - 1e-8) return 1;
+    var low = 0;
+    var high = 1;
+    for (var i = 0; i < 24; i++) {
+      var mid = (low + high) / 2;
+      if (arcDistanceAtProgress(arcData, mid) < targetArc) low = mid;
+      else high = mid;
+    }
+    return (low + high) / 2;
+  }
+
+  // Aanloop zonder einddeceleratie: versnellen, daarna cruise (bal ontvangen met snelheid).
+  function travelTimeNoDecel(distance, speed, accel) {
+    var v = Math.max(0.1, speed);
+    var a = Math.max(0.1, accel);
+    var d = Math.max(0, distance);
+    if (d < 1e-8) return 0;
+    var dAccel = (v * v) / (2 * a);
+    if (dAccel >= d) return Math.sqrt((2 * d) / a);
+    return (v / a) + (d - dAccel) / v;
+  }
+
+  function distanceAtTimeNoDecel(time, distance, speed, accel) {
+    var v = Math.max(0.1, speed);
+    var a = Math.max(0.1, accel);
+    var d = Math.max(0, distance);
+    if (d < 1e-8 || time <= 0) return 0;
+    var tAccel = v / a;
+    var dAccel = 0.5 * a * tAccel * tAccel;
+    if (dAccel >= d) {
+      var tAll = Math.sqrt((2 * d) / a);
+      if (time >= tAll) return d;
+      return 0.5 * a * time * time;
+    }
+    if (time <= tAccel) return 0.5 * a * time * time;
+    return Math.min(d, dAccel + v * (time - tAccel));
+  }
+
+  // Zoek cruise-snelheid zodat travelTimeNoDecel(distance, speed, accel) ≈ desiredTime.
+  function cruiseSpeedForTravelTimeNoDecel(distance, desiredTime, accel) {
+    var a = Math.max(0.1, accel);
+    var d = Math.max(0, distance);
+    var t = Math.max(0.01, desiredTime);
+    if (d < 1e-8) return 0.1;
+
+    var minAccelOnlyTime = Math.sqrt((2 * d) / a);
+    if (t <= minAccelOnlyTime + 1e-6) {
+      return Math.max(0.1, Math.sqrt(Math.max(0.1, a * d)));
+    }
+
+    var low = 0.05;
+    var high = Math.max(1, (2 * d) / t);
+    var expand;
+    for (expand = 0; expand < 16; expand++) {
+      if (travelTimeNoDecel(d, high, a) <= t) break;
+      high *= 2;
+    }
+
+    var i;
+    for (i = 0; i < 32; i++) {
+      var mid = (low + high) / 2;
+      if (travelTimeNoDecel(d, mid, a) > t) low = mid;
+      else high = mid;
+    }
+    return Math.max(0.05, high);
+  }
+
+  function timeToCoverDistanceNoDecel(pathDistance, coverDistance, speed, accel) {
+    var path = Math.max(0, pathDistance);
+    var cover = clamp(coverDistance, 0, path);
+    if (cover <= 1e-8) return 0;
+    if (path < 1e-8 || cover >= path - 1e-8) {
+      return travelTimeNoDecel(path, speed, accel);
+    }
+    var total = travelTimeNoDecel(path, speed, accel);
+    var low = 0;
+    var high = total;
+    var i;
+    for (i = 0; i < 24; i++) {
+      var mid = (low + high) / 2;
+      if (distanceAtTimeNoDecel(mid, path, speed, accel) < cover) low = mid;
+      else high = mid;
+    }
+    return (low + high) / 2;
+  }
+
+  // Na de vangst: start met v0, accel naar vMax, cruise, deceleratie naar stilstand.
+  function travelTimeFromSpeed(distance, v0, vMax, accel) {
+    var a = Math.max(0.1, accel);
+    var d = Math.max(0, distance);
+    v0 = Math.max(0, v0);
+    vMax = Math.max(0.1, vMax);
+    if (d < 1e-8) return 0;
+
+    if (v0 > vMax + 1e-8) {
+      var dStopFromV0 = (v0 * v0) / (2 * a);
+      if (dStopFromV0 >= d - 1e-8) {
+        var vfFast = Math.sqrt(Math.max(0, v0 * v0 - 2 * a * d));
+        return (v0 - vfFast) / a;
+      }
+      var dDecelToMax = (v0 * v0 - vMax * vMax) / (2 * a);
+      var dDecelEndFast = (vMax * vMax) / (2 * a);
+      var dCruiseFast = d - dDecelToMax - dDecelEndFast;
+      if (dCruiseFast < 0) {
+        var vfOnly = Math.sqrt(Math.max(0, v0 * v0 - 2 * a * d));
+        return (v0 - vfOnly) / a;
+      }
+      return (v0 - vMax) / a + dCruiseFast / vMax + vMax / a;
+    }
+
+    var dAccel = (vMax * vMax - v0 * v0) / (2 * a);
+    var dDecel = (vMax * vMax) / (2 * a);
+    if (dAccel + dDecel <= d + 1e-8) {
+      return (vMax - v0) / a + (d - dAccel - dDecel) / vMax + vMax / a;
+    }
+
+    var vPeak2 = a * d + (v0 * v0) / 2;
+    if (vPeak2 <= v0 * v0 + 1e-8) {
+      var vfShort = Math.sqrt(Math.max(0, v0 * v0 - 2 * a * d));
+      return (v0 - vfShort) / a;
+    }
+    var vPeak = Math.sqrt(vPeak2);
+    return (vPeak - v0) / a + vPeak / a;
+  }
+
+  function distanceAtTimeFromSpeed(time, distance, v0, vMax, accel) {
+    var a = Math.max(0.1, accel);
+    var d = Math.max(0, distance);
+    v0 = Math.max(0, v0);
+    vMax = Math.max(0.1, vMax);
+    if (d < 1e-8 || time <= 0) return 0;
+    var total = travelTimeFromSpeed(d, v0, vMax, a);
+    if (time >= total) return d;
+
+    if (v0 > vMax + 1e-8) {
+      var dStopFromV0 = (v0 * v0) / (2 * a);
+      if (dStopFromV0 >= d - 1e-8) {
+        return Math.min(d, v0 * time - 0.5 * a * time * time);
+      }
+      var dDecelToMax = (v0 * v0 - vMax * vMax) / (2 * a);
+      var dDecelEndFast = (vMax * vMax) / (2 * a);
+      var dCruiseFast = d - dDecelToMax - dDecelEndFast;
+      if (dCruiseFast < 0) {
+        return Math.min(d, v0 * time - 0.5 * a * time * time);
+      }
+      var tDown = (v0 - vMax) / a;
+      var tCruiseFast = dCruiseFast / vMax;
+      if (time <= tDown) return v0 * time - 0.5 * a * time * time;
+      if (time <= tDown + tCruiseFast) return dDecelToMax + vMax * (time - tDown);
+      var tdFast = time - tDown - tCruiseFast;
+      return dDecelToMax + dCruiseFast + vMax * tdFast - 0.5 * a * tdFast * tdFast;
+    }
+
+    var dAccel = (vMax * vMax - v0 * v0) / (2 * a);
+    var dDecel = (vMax * vMax) / (2 * a);
+    if (dAccel + dDecel <= d + 1e-8) {
+      var dCruise = d - dAccel - dDecel;
+      var tAccel = (vMax - v0) / a;
+      var tCruise = dCruise / vMax;
+      if (time <= tAccel) return v0 * time + 0.5 * a * time * time;
+      if (time <= tAccel + tCruise) return dAccel + vMax * (time - tAccel);
+      var tDecel = time - tAccel - tCruise;
+      return dAccel + dCruise + vMax * tDecel - 0.5 * a * tDecel * tDecel;
+    }
+
+    var vPeak2 = a * d + (v0 * v0) / 2;
+    if (vPeak2 <= v0 * v0 + 1e-8) {
+      return Math.min(d, v0 * time - 0.5 * a * time * time);
+    }
+    var vPeak = Math.sqrt(vPeak2);
+    var tUp = (vPeak - v0) / a;
+    var dUp = (vPeak * vPeak - v0 * v0) / (2 * a);
+    if (time <= tUp) return v0 * time + 0.5 * a * time * time;
+    var tDownPeak = time - tUp;
+    return dUp + vPeak * tDownPeak - 0.5 * a * tDownPeak * tDownPeak;
+  }
+
+  function timeToCoverDistanceFromSpeed(pathDistance, coverDistance, v0, vMax, accel) {
+    var path = Math.max(0, pathDistance);
+    var cover = clamp(coverDistance, 0, path);
+    if (cover <= 1e-8) return 0;
+    if (path < 1e-8 || cover >= path - 1e-8) {
+      return travelTimeFromSpeed(path, v0, vMax, accel);
+    }
+    var total = travelTimeFromSpeed(path, v0, vMax, accel);
+    var low = 0;
+    var high = total;
+    var i;
+    for (i = 0; i < 24; i++) {
+      var mid = (low + high) / 2;
+      if (distanceAtTimeFromSpeed(mid, path, v0, vMax, accel) < cover) low = mid;
+      else high = mid;
+    }
+    return (low + high) / 2;
+  }
+
+  function applyBoatCatchPace(segment, meetArc, meetTime) {
+    if (!segment) return;
+    var arcData = getSegmentArcData(segment);
+    var meet = meetArc == null ? arcData.total : clamp(meetArc, 0, arcData.total);
+    var arriveAt = Math.max(0.25, meetTime);
+    var remaining = Math.max(0, arcData.total - meet);
+    var settings = getSettings();
+    var accel = kmhToMs(settings.boatAcceleration);
+    var normalSpeed = Math.max(0.1, kmhToMs(settings.boatSpeed));
+    var approachSpeed = meet < 1e-8
+      ? 0
+      : cruiseSpeedForTravelTimeNoDecel(meet, arriveAt, accel);
+    var afterDuration = remaining < 1e-8
+      ? 0
+      : Math.max(0.01, travelTimeFromSpeed(remaining, approachSpeed, normalSpeed, accel));
+
+    clearBoatCatchPace(segment);
+    segment.catchMeetArc = meet;
+    segment.catchMeetTime = arriveAt;
+    segment.catchApproachSpeed = approachSpeed;
+    segment.catchAfterDuration = afterDuration;
+    segment.endTime = (segment.startTime || 0) + arriveAt + afterDuration;
+  }
+
+  function boatCatchPacePathProgress(segment, localTime) {
+    var arcData = getSegmentArcData(segment);
+    var meetArc = clamp(segment.catchMeetArc, 0, arcData.total);
+    var meetTime = Math.max(0.01, segment.catchMeetTime);
+    var afterDuration = Math.max(0, segment.catchAfterDuration || 0);
+    var settings = getSettings();
+    var accel = kmhToMs(settings.boatAcceleration);
+    var normalSpeed = Math.max(0.1, kmhToMs(settings.boatSpeed));
+    var approachSpeed = segment.catchApproachSpeed != null
+      ? segment.catchApproachSpeed
+      : cruiseSpeedForTravelTimeNoDecel(meetArc, meetTime, accel);
+    var boatArc;
+
+    if (localTime <= meetTime) {
+      if (meetArc < 1e-8) {
+        boatArc = 0;
+      } else {
+        boatArc = distanceAtTimeNoDecel(
+          clamp(localTime, 0, meetTime),
+          meetArc,
+          approachSpeed,
+          accel
+        );
+      }
+    } else {
+      var remaining = Math.max(0, arcData.total - meetArc);
+      if (remaining < 1e-8 || afterDuration <= 0) {
+        boatArc = arcData.total;
+      } else {
+        var covered = distanceAtTimeFromSpeed(
+          Math.min(Math.max(0, localTime - meetTime), afterDuration),
+          remaining,
+          approachSpeed,
+          normalSpeed,
+          accel
+        );
+        boatArc = meetArc + covered;
+      }
+    }
+
+    return pathProgressAtArcDistance(arcData, boatArc);
+  }
+
+  function boatPathProgressAtLocalTime(segment, localTime, entity, motionOpts) {
+    if (hasBoatCatchPace(segment)) {
+      return boatCatchPacePathProgress(segment, localTime);
+    }
+    var duration = Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
+    var timeProgress = duration <= 0 ? 1 : clamp(localTime / duration, 0, 1);
+    return segmentPathProgress(segment, timeProgress, entity, motionOpts);
+  }
+
+  function localTimeAtArcDistanceCatchPace(segment, targetArc) {
+    var arcData = getSegmentArcData(segment);
+    targetArc = clamp(targetArc, 0, arcData.total);
+    var meetArc = clamp(segment.catchMeetArc, 0, arcData.total);
+    var meetTime = Math.max(0.01, segment.catchMeetTime);
+    var afterDuration = Math.max(0, segment.catchAfterDuration || 0);
+    var settings = getSettings();
+    var accel = kmhToMs(settings.boatAcceleration);
+    var normalSpeed = Math.max(0.1, kmhToMs(settings.boatSpeed));
+    var approachSpeed = segment.catchApproachSpeed != null
+      ? segment.catchApproachSpeed
+      : cruiseSpeedForTravelTimeNoDecel(meetArc, meetTime, accel);
+
+    if (targetArc <= 0) return 0;
+    if (targetArc >= arcData.total - 1e-8) {
+      return meetTime + afterDuration;
+    }
+
+    if (targetArc <= meetArc + 1e-8) {
+      if (meetArc < 1e-8) return 0;
+      return timeToCoverDistanceNoDecel(meetArc, targetArc, approachSpeed, accel);
+    }
+
+    var remaining = Math.max(0, arcData.total - meetArc);
+    var need = targetArc - meetArc;
+    if (remaining < 1e-8) return meetTime;
+    return meetTime + timeToCoverDistanceFromSpeed(
+      remaining,
+      need,
+      approachSpeed,
+      normalSpeed,
+      accel
+    );
   }
 
   function localTimeAtArcDistance(segment, targetArc, entity, motionOpts, segmentEndTime) {
-    if (targetArc <= 0 || segmentEndTime <= 0) return 0;
+    if (hasBoatCatchPace(segment)) {
+      return localTimeAtArcDistanceCatchPace(segment, targetArc);
+    }
+
+    var duration = segmentEndTime != null
+      ? Math.max(0, segmentEndTime)
+      : Math.max(0, (segment.endTime || 0) - (segment.startTime || 0));
+    if (targetArc <= 0 || duration <= 0) return 0;
     var arcData = getSegmentArcData(segment);
     targetArc = Math.min(targetArc, arcData.total);
-    if (targetArc >= arcData.total) return segmentEndTime;
+    if (targetArc >= arcData.total) return duration;
 
     var low = 0;
     var high = 1;
@@ -3002,18 +3406,22 @@
       if (arc < targetArc) low = mid;
       else high = mid;
     }
-    return ((low + high) / 2) * segmentEndTime;
+    return ((low + high) / 2) * duration;
   }
 
   function getDribbleBallPose(boatSegment, boatPose, localTime, segmentEndTime, holderEntity, motionOpts) {
     var arcData = getSegmentArcData(boatSegment);
     var pathLength = arcData.total;
-    var throwDistance = getDribbleThrowDistance();
+    var throwDistance = getDribbleThrowDistance(boatSegment);
     if (pathLength <= throwDistance) {
       return clone(boatPose);
     }
-    var timeProgress = segmentEndTime <= 0 ? 1 : clamp(localTime / segmentEndTime, 0, 1);
-    var pathProgress = segmentPathProgress(boatSegment, timeProgress, holderEntity, motionOpts);
+    var pathProgress = boatPathProgressAtLocalTime(
+      boatSegment,
+      localTime,
+      holderEntity,
+      motionOpts
+    );
     var boatArc = arcDistanceAtProgress(arcData, pathProgress);
     var driveStart = getDribbleDriveStart(pathLength, throwDistance);
     if (boatArc >= driveStart) {
@@ -3022,7 +3430,11 @@
 
     var cycleIndex = Math.floor(boatArc / throwDistance);
     var throwFromArc = cycleIndex * throwDistance;
-    var restArc = Math.min(driveStart, (cycleIndex + 1) * throwDistance);
+    var restArc = throwFromArc + throwDistance;
+    // Geen verkorte laatste dribbel: alleen volle worpen, daarna meevaren.
+    if (restArc > driveStart + 1e-6) {
+      return clone(boatPose);
+    }
     var fromPose = poseAtArcDistance(boatSegment, throwFromArc, arcData);
     var toPose = poseAtArcDistance(boatSegment, restArc, arcData);
     var ballEntity = getBallEntity() || { type: 'ball' };
@@ -3059,14 +3471,18 @@
   ) {
     var arcData = getSegmentArcData(boatSegment);
     var pathLength = arcData.total;
-    var throwDistance = getDribbleThrowDistance();
+    var throwDistance = getDribbleThrowDistance(boatSegment);
     var remainingLength = pathLength - catchArc;
     if (remainingLength <= throwDistance) {
       return clone(boatPose);
     }
 
-    var timeProgress = segmentEndTime <= 0 ? 1 : clamp(localTime / segmentEndTime, 0, 1);
-    var pathProgress = segmentPathProgress(boatSegment, timeProgress, holderEntity, motionOpts);
+    var pathProgress = boatPathProgressAtLocalTime(
+      boatSegment,
+      localTime,
+      holderEntity,
+      motionOpts
+    );
     var boatArc = arcDistanceAtProgress(arcData, pathProgress);
     if (boatArc < catchArc) {
       return poseAtArcDistance(boatSegment, catchArc, arcData);
@@ -3080,7 +3496,10 @@
 
     var cycleIndex = Math.floor(effectiveArc / throwDistance);
     var throwFromArc = catchArc + cycleIndex * throwDistance;
-    var restArc = Math.min(catchArc + driveStart, catchArc + (cycleIndex + 1) * throwDistance);
+    var restArc = throwFromArc + throwDistance;
+    if (restArc > catchArc + driveStart + 1e-6) {
+      return clone(boatPose);
+    }
     var fromPose = poseAtArcDistance(boatSegment, throwFromArc, arcData);
     var toPose = poseAtArcDistance(boatSegment, restArc, arcData);
     var ballEntity = getBallEntity() || { type: 'ball' };
@@ -3131,7 +3550,7 @@
       }
       return;
     }
-    if (ballSeg) return;
+    if (ballSeg && !isFreeBallRoute(ballSeg)) return;
 
     var claim = getBallClaimAtTime(routes, localTime, motionOptsByEntity);
     if (claim) {
@@ -3147,6 +3566,8 @@
       );
       return;
     }
+
+    if (ballSeg) return;
 
     if (isDribbleActive(ballHolderId, routes)) {
       var holderSeg = routes ? routes[ballHolderId] : getPrimarySegment(ballHolderId);
@@ -3189,11 +3610,13 @@
       targetEntityId: metadata.targetEntityId || null,
       syncToEntityId: metadata.syncToEntityId || null,
       syncArcDistance: metadata.syncArcDistance != null ? metadata.syncArcDistance : null,
+      syncPathProgress: metadata.syncPathProgress != null ? metadata.syncPathProgress : null,
     }];
     if (metadata.passType === 'free') {
       setBallHolderId(null);
     }
     recomputeAllSegmentDurations();
+    if (isFreeBallRoute(track.segments[0])) refreshAllBoatBallClaims();
     state.tactic.updatedAt = new Date().toISOString();
     renderAll();
   }
@@ -3286,6 +3709,7 @@
       var segment = routes[entityId];
       if (!segment) return;
       var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+      clearBoatCatchPace(segment);
       segment.startTime = segment.startTime || 0;
       segment.endTime = segment.startTime + segmentDuration(
         segment.startPose,
@@ -3308,11 +3732,11 @@
       if (ballSeg.syncToEntityId) {
         var targetSeg = routes[ballSeg.syncToEntityId];
         if (targetSeg && targetSeg.endTime > 0) {
+          var targetEntity = state.tactic.entities.find(function (item) {
+            return item.id === ballSeg.syncToEntityId;
+          });
           var syncEnd = targetSeg.endTime;
           if (ballSeg.syncArcDistance != null) {
-            var targetEntity = state.tactic.entities.find(function (item) {
-              return item.id === ballSeg.syncToEntityId;
-            });
             syncEnd = localTimeAtArcDistance(
               targetSeg,
               ballSeg.syncArcDistance,
@@ -3321,9 +3745,17 @@
               targetSeg.endTime
             );
           }
-          if (syncEnd > travelDuration) {
+          if (syncEnd > travelDuration + 1e-6) {
+            // Speler is later op het meetpunt: bal wacht met gooien.
             ballSeg.throwDelay = syncEnd - travelDuration;
             ballSeg.endTime = syncEnd;
+          } else if (travelDuration > syncEnd + 1e-6) {
+            // Bal is later: speler vaart langzaam naar het punt, daarna op normaal tempo door.
+            var meetArc = ballSeg.syncArcDistance != null
+              ? ballSeg.syncArcDistance
+              : getSegmentArcData(targetSeg).total;
+            applyBoatCatchPace(targetSeg, meetArc, travelDuration);
+            ballSeg.endTime = travelDuration;
           } else {
             ballSeg.endTime = travelDuration;
           }
@@ -3391,6 +3823,7 @@
   }
 
   function recomputeAllSegmentDurations() {
+    syncLinkedBallRouteGeometry();
     var routes = captureDraftRoutes();
     if (!Object.keys(routes).length) {
       invalidateTransportTimeline();
@@ -3405,12 +3838,21 @@
       if (entityId === 'ball') {
         segment.throwDelay = routes[entityId].throwDelay || 0;
         segment.travelDuration = routes[entityId].travelDuration;
+        clearBoatCatchPace(segment);
+      } else if (routes[entityId].catchMeetTime != null) {
+        segment.catchMeetArc = routes[entityId].catchMeetArc;
+        segment.catchMeetTime = routes[entityId].catchMeetTime;
+        segment.catchApproachSpeed = routes[entityId].catchApproachSpeed;
+        segment.catchAfterDuration = routes[entityId].catchAfterDuration;
+      } else {
+        clearBoatCatchPace(segment);
       }
     });
     invalidateTransportTimeline();
   }
 
   function getPosesAtTime() {
+    syncLinkedBallRouteGeometry();
     var poses = {};
     state.tactic.entities.forEach(function (entity) {
       poses[entity.id] = clone(entity.initial);
@@ -3424,13 +3866,7 @@
           var localTime = time - (segment.startTime || 0);
           var pathT = entity.type === 'ball'
             ? ballSegmentPathProgress(segment, localTime)
-            : segmentPathProgress(
-              segment,
-              segment.endTime <= segment.startTime
-                ? 1
-                : localTime / (segment.endTime - segment.startTime),
-              entity
-            );
+            : boatPathProgressAtLocalTime(segment, localTime, entity);
           poses[entity.id] = poseAlongSegment(segment, pathT, entity);
           break;
         }
@@ -3559,6 +3995,7 @@
   }
 
   function exportTactic() {
+    if (!hasPlayableSteps()) return;
     openExportDialog();
   }
 
@@ -4166,12 +4603,15 @@
     ctx.restore();
   }
 
-  function drawDribbleMarkers(boatSegment) {
+  function drawDribbleMarkers(boatSegment, startArc) {
+    startArc = Math.max(0, startArc || 0);
     var arcData = getSegmentArcData(boatSegment);
-    var throwDistance = getDribbleThrowDistance();
-    var driveStart = getDribbleDriveStart(arcData.total, throwDistance);
-    var dist = throwDistance;
-    while (dist < driveStart - 0.05) {
+    var throwDistance = getDribbleThrowDistance(boatSegment);
+    var remainingLength = arcData.total - startArc;
+    if (remainingLength <= throwDistance) return;
+    var driveStart = startArc + getDribbleDriveStart(remainingLength, throwDistance);
+    var dist = startArc + throwDistance;
+    while (dist <= driveStart + 1e-6) {
       drawSmallBallMarker(poseAtArcDistance(boatSegment, dist, arcData));
       dist += throwDistance;
     }
@@ -4257,7 +4697,9 @@
       if (state.drag.mode === 'route' || state.drag.mode === 'ghost') return state.drag.previewPose;
     }
     var segment = getPrimarySegment(entityId);
-    return segment ? segment.endPose : null;
+    if (!segment) return null;
+    if (entityId === 'ball') return getEffectiveBallEndPose(segment);
+    return segment.endPose;
   }
 
   function drawEntityRoutes() {
@@ -4344,15 +4786,19 @@
       var routeStyle = entity.type === 'ball' ? getBallRouteStyle(segment) : null;
       drawRoutePath(segment.startPose, endPose, controls, selected, routeStyle);
 
-      if (entity.type === 'boat' && holderId === entity.id && isDribbleActive(holderId)) {
-        drawDribbleMarkers(segment);
+      if (entity.type === 'boat') {
+        var dribbleStartArc = getDribbleStartArcForEntity(entity.id, segment);
+        if (dribbleStartArc != null) {
+          drawDribbleMarkers(segment, dribbleStartArc);
+        }
       }
 
       var ballSegment = getPrimarySegment('ball');
       if (entity.type === 'boat' && ballSegment
         && ballSegment.syncToEntityId === entity.id
-        && ballSegment.syncArcDistance != null) {
-        drawSmallBallMarker(poseAtArcDistance(segment, ballSegment.syncArcDistance));
+        && (ballSegment.syncPathProgress != null || ballSegment.syncArcDistance != null)) {
+        var meetPose = getRoutePassMeetPose(ballSegment, segment);
+        if (meetPose) drawSmallBallMarker(meetPose);
       }
     });
   }
@@ -5089,7 +5535,9 @@
       entity.initial.rotation = tool.keptRotation;
       var track = getTrackForEntity(tool.entityId);
       track.segments = [];
+      if (entity.type === 'boat') retargetBallRouteForLinkedBoat(tool.entityId);
       syncCurrentStepPoses();
+      recomputeAllSegmentDurations();
       state.tactic.updatedAt = new Date().toISOString();
       clearTool();
       renderAll();
@@ -5144,16 +5592,156 @@
     return null;
   }
 
-  function updateBallSegmentEndPose(endPose) {
+  function updateBallSegmentEndPose(endPose, passTarget) {
     var segment = getPrimarySegment('ball');
     if (!segment) return;
     endPose = clampPoseToField(endPose);
     if (distanceMeters(segment.startPose, endPose) < 0.35) return;
-    segment.endPose = { x: endPose.x, y: endPose.y, rotation: 0 };
-    if (segment.passType === 'free') setBallHolderId(null);
+
+    if (passTarget === undefined) {
+      passTarget = resolveBallRetargetAtEndPose(segment, endPose);
+    }
+
+    if (passTarget) {
+      var targetPose = clampPoseToField(passTarget.targetPose || endPose);
+      segment.passType = passTarget.passType || 'direct';
+      segment.targetEntityId = passTarget.boatId || null;
+      segment.syncToEntityId = passTarget.syncToEntityId || null;
+      segment.syncArcDistance = passTarget.syncArcDistance != null ? passTarget.syncArcDistance : null;
+      segment.syncPathProgress = passTarget.syncPathProgress != null ? passTarget.syncPathProgress : null;
+      segment.endPose = { x: targetPose.x, y: targetPose.y, rotation: 0 };
+    } else {
+      segment.passType = 'free';
+      segment.targetEntityId = null;
+      segment.syncToEntityId = null;
+      segment.syncArcDistance = null;
+      segment.syncPathProgress = null;
+      segment.endPose = { x: endPose.x, y: endPose.y, rotation: 0 };
+      setBallHolderId(null);
+    }
+
     recomputeAllSegmentDurations();
+    if (isFreeBallRoute(segment)) refreshAllBoatBallClaims();
     state.tactic.updatedAt = new Date().toISOString();
   }
+
+  function resolveBallRetargetAtEndPose(segment, endPose, canvasPoint) {
+    if (!segment || !endPose) return null;
+    var canvas = canvasPoint || metersToCanvas(endPose);
+    var passerId = resolveBallPasserId(segment.startPose, getBallHolderId());
+    if (!passerId) return null;
+    return resolveBallPassTargetAtCanvasPoint(
+      canvas.x,
+      canvas.y,
+      getHolderTeam(passerId),
+      passerId
+    );
+  }
+
+  function resolveBallGhostDragTarget(drag, point, meters) {
+    var freePose = clampPoseToField({
+      x: meters.x,
+      y: meters.y,
+      rotation: 0,
+    });
+    var passerId = resolveBallPasserId(drag.startPose, getBallHolderId());
+    var passTarget = passerId
+      ? resolveBallPassTargetAtCanvasPoint(
+        point.x,
+        point.y,
+        getHolderTeam(passerId),
+        passerId
+      )
+      : null;
+    return {
+      previewPose: passTarget ? clone(passTarget.targetPose) : freePose,
+      passTarget: passTarget,
+    };
+  }
+
+  function getBallLinkedBoatId(ballSeg) {
+    if (!ballSeg) return null;
+    return ballSeg.targetEntityId || ballSeg.syncToEntityId || null;
+  }
+
+  function isRouteSyncedBallPass(ballSeg) {
+    return !!(ballSeg
+      && ballSeg.syncToEntityId
+      && (ballSeg.syncPathProgress != null || ballSeg.syncArcDistance != null));
+  }
+
+  function getRoutePassMeetPose(ballSeg, boatSeg) {
+    if (!ballSeg || !boatSeg) return null;
+    if (ballSeg.syncPathProgress != null) {
+      return poseAlongSegment(boatSeg, clamp(ballSeg.syncPathProgress, 0, 1), null);
+    }
+    if (ballSeg.syncArcDistance != null) {
+      return poseAtArcDistance(boatSeg, ballSeg.syncArcDistance);
+    }
+    return null;
+  }
+
+  function refreshRoutePassArcDistance(ballSeg, boatSeg) {
+    if (!ballSeg || !boatSeg || ballSeg.syncPathProgress == null) return;
+    var arcData = getSegmentArcData(boatSeg);
+    ballSeg.syncArcDistance = arcDistanceAtProgress(
+      arcData,
+      clamp(ballSeg.syncPathProgress, 0, 1)
+    );
+  }
+
+  function getEffectiveBallEndPose(ballSeg) {
+    if (!ballSeg) return null;
+    if (ballSeg.passType === 'free' || ballSeg.passType === 'space') {
+      return ballSeg.endPose;
+    }
+    var boatId = getBallLinkedBoatId(ballSeg);
+    if (!boatId) return ballSeg.endPose;
+
+    if (isRouteSyncedBallPass(ballSeg)) {
+      var routeBoatSeg = getPrimarySegment(boatId);
+      if (routeBoatSeg) {
+        var meetPose = getRoutePassMeetPose(ballSeg, routeBoatSeg);
+        if (meetPose) return clampPoseToField(meetPose);
+      }
+    }
+
+    if (ballSeg.passType === 'direct' || ballSeg.targetEntityId || ballSeg.syncToEntityId) {
+      return getBoatTargetPose(boatId);
+    }
+    return ballSeg.endPose;
+  }
+
+  function syncLinkedBallRouteGeometry() {
+    var ballSeg = getPrimarySegment('ball');
+    if (!ballSeg) return false;
+    if (ballSeg.passType === 'free' || ballSeg.passType === 'space') return false;
+
+    var boatId = getBallLinkedBoatId(ballSeg);
+    if (!boatId) return false;
+
+    if (isRouteSyncedBallPass(ballSeg)) {
+      var boatSeg = getPrimarySegment(boatId);
+      if (boatSeg) refreshRoutePassArcDistance(ballSeg, boatSeg);
+    }
+
+    var liveEnd = getEffectiveBallEndPose(ballSeg);
+    if (!liveEnd) return false;
+    if (ballSeg.endPose
+      && Math.abs(ballSeg.endPose.x - liveEnd.x) < 1e-6
+      && Math.abs(ballSeg.endPose.y - liveEnd.y) < 1e-6) {
+      return false;
+    }
+    ballSeg.endPose = { x: liveEnd.x, y: liveEnd.y, rotation: 0 };
+    return true;
+  }
+
+  function retargetBallRouteForLinkedBoat(boatId) {
+    var ballSeg = getPrimarySegment('ball');
+    if (!ballSeg || getBallLinkedBoatId(ballSeg) !== boatId) return false;
+    return syncLinkedBallRouteGeometry();
+  }
+
   function getControlHandleAtCanvasPoint(x, y) {
     var hitRadius = Math.max(isPhoneLayout() ? 18 : 10, fieldScale * 0.3);
     for (var i = state.tactic.entities.length - 1; i >= 0; i--) {
@@ -5172,18 +5760,23 @@
     return null;
   }
 
-  function updateSegmentEndPose(entityId, endPose) {
+  function updateSegmentEndPose(entityId, endPose, passTarget) {
     if (!canEdit()) return;
     var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
     var segment = getPrimarySegment(entityId);
     if (!entity || !segment) return;
 
+    if (entity.type === 'ball') {
+      updateBallSegmentEndPose(endPose, passTarget);
+      return;
+    }
+
     endPose = clampPoseToField(endPose);
     if (distanceMeters(segment.startPose, endPose) < 0.35) return;
 
-    var keptRotation = entity.type === 'ball' ? 0 : segment.endPose.rotation;
+    var keptRotation = segment.endPose.rotation;
 
-    if (entity.type === 'boat' && hasRouteControls(segment)) {
+    if (hasRouteControls(segment)) {
       // Start- én eindtangent vasthouden.
       var existing = resolveRouteControls(segment);
       var mu = existing
@@ -5208,7 +5801,9 @@
     segment.endPose.x = endPose.x;
     segment.endPose.y = endPose.y;
     segment.endPose.rotation = keptRotation;
+    retargetBallRouteForLinkedBoat(entityId);
     recomputeAllSegmentDurations();
+    updateBallClaimOnRoute(entityId, segment.endPose);
     state.tactic.updatedAt = new Date().toISOString();
   }
 
@@ -5260,6 +5855,7 @@
       controlOut: controls ? controls.controlOut : null,
       controlIn: controls ? controls.controlIn : null,
     }];
+    if (entity.type === 'boat') retargetBallRouteForLinkedBoat(entityId);
     recomputeAllSegmentDurations();
 
     if (entity.type === 'boat') {
@@ -5294,6 +5890,7 @@
       controls.controlIn,
       segment.startPose.rotation
     );
+    retargetBallRouteForLinkedBoat(entityId);
     recomputeAllSegmentDurations();
     state.tactic.updatedAt = new Date().toISOString();
   }
@@ -5320,6 +5917,7 @@
       controls.controlIn,
       segment.startPose.rotation
     );
+    retargetBallRouteForLinkedBoat(entityId);
     recomputeAllSegmentDurations();
     state.tactic.updatedAt = new Date().toISOString();
     renderAll();
@@ -5466,6 +6064,9 @@
         entity.initial.x = freestylePose.x;
         entity.initial.y = freestylePose.y;
         entity.initial.rotation = freestylePose.rotation;
+        if (entity.type === 'boat' && retargetBallRouteForLinkedBoat(state.drag.entityId)) {
+          recomputeAllSegmentDurations();
+        }
         previewFreestyleBallSnap(state.drag, state.drag.entityId, freestylePose);
         renderCanvas();
         return;
@@ -5484,6 +6085,14 @@
       }
 
       if (state.drag.mode === 'ghost') {
+        if (entity && entity.type === 'ball') {
+          var ballGhostTarget = resolveBallGhostDragTarget(state.drag, point, meters);
+          state.drag.previewPose = ballGhostTarget.previewPose;
+          state.drag.passTarget = ballGhostTarget.passTarget;
+          updateBallSegmentEndPose(state.drag.previewPose, state.drag.passTarget);
+          renderCanvas();
+          return;
+        }
         state.drag.previewPose = previewEndPose(
           entity,
           state.drag.startPose,
@@ -5778,11 +6387,13 @@
           entity.initial.x = freestylePose.x;
           entity.initial.y = freestylePose.y;
           entity.initial.rotation = freestylePose.rotation;
+          if (entity.type === 'boat') retargetBallRouteForLinkedBoat(drag.entityId);
           syncCurrentStepPoses();
           if (!claimBallPossessionImmediate(drag.entityId, freestylePose, drag.ballRefPose)) {
             restoreBallSnapPreview(drag);
             syncCurrentStepPoses();
           }
+          recomputeAllSegmentDurations();
           state.tactic.updatedAt = new Date().toISOString();
         }
         state.drag = null;
@@ -5800,6 +6411,19 @@
       }
 
       if (drag.mode === 'ghost') {
+        if (entity && entity.type === 'ball') {
+          var ballGhostEnd = drag.previewPose;
+          if (!ballGhostEnd) {
+            var ballGhostTarget = resolveBallGhostDragTarget(drag, point, meters);
+            ballGhostEnd = ballGhostTarget.previewPose;
+            drag.passTarget = ballGhostTarget.passTarget;
+          }
+          updateBallSegmentEndPose(ballGhostEnd, drag.passTarget);
+          state.drag = null;
+          releaseCapture(event);
+          renderAll();
+          return;
+        }
         var ghostEnd = drag.previewPose || previewEndPose(
           entity,
           drag.startPose,
@@ -5815,9 +6439,12 @@
       }
 
       if (drag.mode === 'ball-route') {
-        finishBallRouteDrag(drag, point);
-        state.drag = null;
-        releaseCapture(event);
+        try {
+          finishBallRouteDrag(drag, point);
+        } finally {
+          state.drag = null;
+          releaseCapture(event);
+        }
         renderAll();
         return;
       }
@@ -5955,8 +6582,8 @@
       if (event.target.id === 'export-backdrop') closeExportDialog();
     });
     on('btn-import-tactic', 'click', function () {
-      var input = document.getElementById('import-tactic-input');
-      if (input) input.click();
+      closePredefinedDialog();
+      triggerImportDialog();
     });
     on('btn-reset-all', 'click', resetAll);
     (function setupImportInput() {
@@ -6096,7 +6723,7 @@
       }
       if (mod && lower === 's') {
         event.preventDefault();
-        if (canEdit()) exportTactic();
+        if (canEdit() && hasPlayableSteps()) exportTactic();
         return;
       }
       if (mod && lower === 'o') {

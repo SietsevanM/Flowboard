@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Flowboard</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <script>
     window.__FLOWBOARD_CACHE_BUST = Date.now();
     var css = document.createElement('link');
@@ -87,6 +88,16 @@
           <span class="sheet-handle-bar" aria-hidden="true"></span>
           <span class="sheet-handle-label" data-i18n="steps.label">Steps</span>
         </button>
+        <p id="sheet-peek-summary" class="sheet-peek-summary" aria-live="polite">Start</p>
+        <div id="start-actions" class="start-actions sheet-expand-only hidden">
+          <button type="button" class="btn btn-toolbar" id="btn-predefined-flows" data-i18n-title="predefined.choose.title">
+            <span class="btn-toolbar-label" data-i18n="predefined.choose">Select Flow</span>
+          </button>
+          <button type="button" class="btn btn-toolbar" id="btn-set-start" data-i18n-title="steps.setStart.title">
+            <span class="btn-toolbar-label" data-i18n="steps.setStart">Set positions</span>
+            <span id="start-indicator" class="start-indicator" data-i18n-title="steps.startNotSet" aria-hidden="true"></span>
+          </button>
+        </div>
         <div class="toolbar-row sheet-toolbar">
           <button type="button" class="btn btn-icon" id="btn-undo" data-i18n-title="steps.undo" data-i18n-aria="steps.undo" disabled>
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
@@ -99,34 +110,23 @@
             </svg>
           </button>
         </div>
-        <p id="sheet-peek-summary" class="sheet-peek-summary" aria-live="polite">Start</p>
+        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-goto-start" data-i18n-title="steps.gotoStart.title" data-i18n="steps.gotoStart" disabled>
+          Revert move
+        </button>
         <button type="button" class="btn btn-primary btn-go" id="btn-go" disabled data-i18n="steps.go">
           Next Move
         </button>
-        <div id="start-actions" class="start-actions sheet-expand-only hidden">
-          <button type="button" class="btn btn-toolbar" id="btn-predefined-flows" data-i18n-title="predefined.choose.title">
-            <span class="btn-toolbar-label" data-i18n="predefined.choose">Select existing flow</span>
-          </button>
-          <button type="button" class="btn btn-toolbar" id="btn-set-start" data-i18n-title="steps.setStart.title">
-            <span class="btn-toolbar-label" data-i18n="steps.setStart">Set start position</span>
-            <span id="start-indicator" class="start-indicator" data-i18n-title="steps.startNotSet" aria-hidden="true"></span>
-          </button>
-        </div>
-        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-goto-start" data-i18n-title="steps.gotoStart.title" data-i18n="steps.gotoStart" disabled>
-          Back to start position
-        </button>
         <h2 class="steps-panel-title sheet-expand-only" data-i18n="steps.label">Steps</h2>
         <ol id="steps-list" class="steps-list sheet-expand-only"></ol>
-        <p id="steps-hint" class="steps-hint muted sheet-expand-only" data-i18n="steps.hint.default">Drag boats to set ghosts, then Next Move.</p>
-        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-export-tactic" data-i18n="settings.export">
-          Export
-        </button>
-        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-import-tactic" data-i18n="settings.import">
-          Import
-        </button>
-        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-reset-all" data-i18n="steps.reset">
-          Reset
-        </button>
+        <p id="steps-hint" class="steps-hint muted sheet-expand-only hidden"></p>
+        <div class="steps-panel-footer sheet-expand-only">
+          <button type="button" class="btn btn-toolbar hidden" id="btn-export-tactic" data-i18n="settings.export">
+            Export
+          </button>
+          <button type="button" class="btn btn-toolbar" id="btn-reset-all" data-i18n="steps.reset">
+            Reset
+          </button>
+        </div>
       </aside>
     </div>
 
@@ -144,6 +144,7 @@
         <button type="button" class="btn" id="btn-close-settings" data-i18n="settings.close">Close</button>
       </div>
       <div id="settings-body" class="settings-body"></div>
+      <p class="settings-footer-disclaimer" data-i18n="footer.disclaimer">Door gebruik van deze website ga je akkoord dat Keistad F de allerbeste is</p>
     </div>
   </div>
 
@@ -176,11 +177,16 @@
   <div id="predefined-backdrop" class="settings-backdrop hidden">
     <div class="settings-panel panel predefined-panel" role="dialog" aria-labelledby="predefined-title" aria-modal="true">
       <div class="settings-head">
-        <h2 id="predefined-title" data-i18n="predefined.title">Select existing flow</h2>
+        <h2 id="predefined-title" data-i18n="predefined.title">Select Flow</h2>
         <button type="button" class="btn" id="btn-close-predefined" data-i18n="settings.close">Close</button>
       </div>
       <p class="predefined-intro muted" data-i18n="predefined.intro">Choose a base flow to start from.</p>
       <div id="predefined-list" class="predefined-list" role="list"></div>
+      <div class="predefined-actions">
+        <button type="button" class="btn btn-toolbar" id="btn-import-tactic" data-i18n="settings.import">
+          Import
+        </button>
+      </div>
     </div>
   </div>
 
