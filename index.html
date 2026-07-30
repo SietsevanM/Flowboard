@@ -65,6 +65,7 @@
               <span data-i18n="header.edit">Edit</span>
             </button>
           </div>
+          <button type="button" class="btn" id="btn-shortcuts" data-i18n-title="shortcuts.help" data-i18n-aria="shortcuts.help">?</button>
           <button type="button" class="btn" id="btn-settings" data-i18n="header.settings">Settings</button>
         </div>
       </div>
@@ -73,13 +74,6 @@
     <div class="field-stage">
       <div class="canvas-wrap">
         <canvas id="field-canvas" width="800" height="600"></canvas>
-        <div id="boat-action-menu" class="boat-action-menu hidden" role="menu" data-i18n-aria="boatMenu.aria">
-          <button type="button" class="btn btn-menu" data-action="pass" role="menuitem" data-i18n="boatMenu.pass">Pass</button>
-          <button type="button" class="btn btn-menu" data-action="vaarlijn" role="menuitem" data-i18n="boatMenu.vaarlijn">Through ball</button>
-          <button type="button" class="btn btn-menu" data-action="vaar" role="menuitem" data-i18n="boatMenu.vaar">Paddle</button>
-          <button type="button" class="btn btn-menu" data-action="draai" role="menuitem" data-i18n="boatMenu.draai">Turn</button>
-          <button type="button" class="btn btn-menu" data-action="cancel" role="menuitem" data-i18n="boatMenu.cancel">Cancel</button>
-        </div>
       </div>
       <aside id="steps-panel" class="steps-panel is-peek" data-i18n-aria="steps.panel.aria">
         <button
@@ -107,9 +101,12 @@
         </div>
         <p id="sheet-peek-summary" class="sheet-peek-summary" aria-live="polite">Start</p>
         <button type="button" class="btn btn-primary btn-go" id="btn-go" disabled data-i18n="steps.go">
-          Go
+          Next Step
         </button>
         <div id="start-actions" class="start-actions sheet-expand-only hidden">
+          <button type="button" class="btn btn-toolbar" id="btn-predefined-flows" data-i18n-title="predefined.choose.title">
+            <span class="btn-toolbar-label" data-i18n="predefined.choose">Select existing flow</span>
+          </button>
           <button type="button" class="btn btn-toolbar" id="btn-set-start" data-i18n-title="steps.setStart.title">
             <span class="btn-toolbar-label" data-i18n="steps.setStart">Set start position</span>
             <span id="start-indicator" class="start-indicator" data-i18n-title="steps.startNotSet" aria-hidden="true"></span>
@@ -120,7 +117,7 @@
         </button>
         <h2 class="steps-panel-title sheet-expand-only" data-i18n="steps.label">Steps</h2>
         <ol id="steps-list" class="steps-list sheet-expand-only"></ol>
-        <p id="steps-hint" class="steps-hint muted sheet-expand-only" data-i18n="steps.hint.default">Drag boats to set ghosts, then Go.</p>
+        <p id="steps-hint" class="steps-hint muted sheet-expand-only" data-i18n="steps.hint.default">Drag boats to set ghosts, then Next Step.</p>
         <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-export-tactic" data-i18n="settings.export">
           Export
         </button>
@@ -150,6 +147,16 @@
     </div>
   </div>
 
+  <div id="shortcuts-backdrop" class="settings-backdrop hidden">
+    <div class="settings-panel panel shortcuts-panel" role="dialog" aria-labelledby="shortcuts-title" aria-modal="true">
+      <div class="settings-head">
+        <h2 id="shortcuts-title" data-i18n="shortcuts.title">Help</h2>
+        <button type="button" class="btn" id="btn-close-shortcuts" data-i18n="shortcuts.close">Close</button>
+      </div>
+      <div id="shortcuts-body" class="shortcuts-body"></div>
+    </div>
+  </div>
+
   <div id="export-backdrop" class="settings-backdrop hidden">
     <div class="settings-panel panel export-panel" role="dialog" aria-labelledby="export-title">
       <div class="settings-head">
@@ -166,6 +173,17 @@
     </div>
   </div>
 
+  <div id="predefined-backdrop" class="settings-backdrop hidden">
+    <div class="settings-panel panel predefined-panel" role="dialog" aria-labelledby="predefined-title" aria-modal="true">
+      <div class="settings-head">
+        <h2 id="predefined-title" data-i18n="predefined.title">Select existing flow</h2>
+        <button type="button" class="btn" id="btn-close-predefined" data-i18n="settings.close">Close</button>
+      </div>
+      <p class="predefined-intro muted" data-i18n="predefined.intro">Choose a base flow to start from.</p>
+      <div id="predefined-list" class="predefined-list" role="list"></div>
+    </div>
+  </div>
+
   <input type="file" id="import-tactic-input" class="hidden" accept=".json,application/json" aria-hidden="true" tabindex="-1">
 
   <script>
@@ -174,9 +192,19 @@
     i18n.src = 'i18n.js?v=' + bust;
     i18n.onload = function () {
       FlowboardI18n.init();
-      var js = document.createElement('script');
-      js.src = 'app.js?v=' + bust;
-      document.body.appendChild(js);
+      function loadApp() {
+        var js = document.createElement('script');
+        js.src = 'app.js?v=' + bust;
+        document.body.appendChild(js);
+      }
+      var catalog = document.createElement('script');
+      catalog.src = 'predefined/catalog.js?v=' + bust;
+      catalog.onload = loadApp;
+      catalog.onerror = function () {
+        window.FlowboardPredefinedFlows = window.FlowboardPredefinedFlows || [];
+        loadApp();
+      };
+      document.body.appendChild(catalog);
     };
     document.body.appendChild(i18n);
   </script>

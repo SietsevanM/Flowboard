@@ -52,7 +52,8 @@
   var CONFETTI_COUNT = 48;
   var LINE_4M = 4;
   var LINE_6M = 6;
-  var CANVAS_PADDING = 28;
+  var CANVAS_PADDING_DESKTOP = 28;
+  var CANVAS_PADDING_PHONE = 6;
   var KEEPER_CENTER_X = 0.25;
   var KMH_PER_MS = 3.6;
 
@@ -610,7 +611,7 @@
       timeline: null,
       scrubbing: false,
     },
-    actionMenu: null,
+    keyboardFocusEntityId: null,
     message: null,
     history: { past: [], future: [] },
     drag: null,
@@ -618,6 +619,7 @@
     tool: null,
     startPoseEdit: false,
     settingsOpen: false,
+    shortcutsOpen: false,
     stepRename: null,
     ballWasInGoal: false,
     confetti: {
@@ -629,14 +631,24 @@
 
   var DRAG_THRESHOLD_PX = 8;
   var START_POSE_DRAG_THRESHOLD_PX = 16;
-  var PHONE_LAYOUT_MQ = '(max-width: 767px)';
-  var SHEET_PEEK_PX = 92;
+  var PHONE_LAYOUT_MQ = '(max-width: 1024px) and (orientation: portrait)';
+  var PHONE_LANDSCAPE_MQ = '(orientation: landscape) and (max-height: 560px) and (pointer: coarse)';
+  var SHEET_PEEK_PX = 118;
   var MIN_ENTITY_HIT_PX = 22;
   var LONG_PRESS_MS = 500;
   var LONG_PRESS_MOVE_PX = 10;
 
+  function isPhoneLandscape() {
+    return !!(window.matchMedia && window.matchMedia(PHONE_LANDSCAPE_MQ).matches);
+  }
+
   function isPhoneLayout() {
-    return !!(window.matchMedia && window.matchMedia(PHONE_LAYOUT_MQ).matches);
+    if (!window.matchMedia) return false;
+    return window.matchMedia(PHONE_LAYOUT_MQ).matches || isPhoneLandscape();
+  }
+
+  function canvasPadding() {
+    return isPhoneLayout() ? CANVAS_PADDING_PHONE : CANVAS_PADDING_DESKTOP;
   }
 
   function getSafeInset(side) {
@@ -647,7 +659,8 @@
   }
 
   function getSheetPeekReserve() {
-    if (!isPhoneLayout()) return 0;
+    // Portrait phone reserves bottom sheet height; landscape puts steps on the side.
+    if (!isPhoneLayout() || isPhoneLandscape()) return 0;
     return SHEET_PEEK_PX + getSafeInset('bottom');
   }
 
@@ -661,9 +674,17 @@
       if (toggle) toggle.setAttribute('aria-expanded', 'false');
       return;
     }
-    panel.classList.toggle('is-expanded', !!expanded);
-    panel.classList.toggle('is-peek', !expanded);
-    if (toggle) toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    var nextExpanded = !!expanded;
+    var changed = panel.classList.contains('is-expanded') !== nextExpanded;
+    panel.classList.toggle('is-expanded', nextExpanded);
+    panel.classList.toggle('is-peek', !nextExpanded);
+    if (toggle) toggle.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+    if (changed && isPhoneLandscape()) {
+      // Side panel width changes the canvas wrap — refit after layout.
+      requestAnimationFrame(function () {
+        renderCanvas();
+      });
+    }
   }
 
   function collapseStepsSheet() {
@@ -705,27 +726,14 @@
     canvas.classList.remove('tool-active');
   }
 
-  function closeActionMenu() {
-    state.actionMenu = null;
-  }
-
   function clearPointerInteraction() {
+    if (state.drag && state.drag.mode === 'freestyle') {
+      restoreBallSnapPreview(state.drag);
+    }
     state.drag = null;
     state.pendingPointer = null;
     clearTool();
     canvas.classList.remove('dragging');
-  }
-
-  function getEntityActions(entity, options) {
-    if (!entity) return [];
-    if (options && options.atGhost) {
-      return getPrimarySegment(entity.id) ? ['cancel'] : [];
-    }
-    var actions = [];
-    if (entity.type === 'ball') actions = ['pass', 'vaarlijn', 'vaar'];
-    else if (entity.type === 'boat') actions = ['vaar', 'draai'];
-    if (getPrimarySegment(entity.id)) actions.push('cancel');
-    return actions;
   }
 
   function clearEntityRoute(entityId) {
@@ -735,7 +743,6 @@
     getTrackForEntity(entityId).segments = [];
     recomputeAllSegmentDurations();
     state.tactic.updatedAt = new Date().toISOString();
-    closeActionMenu();
     clearPointerInteraction();
     renderAll();
   }
@@ -760,15 +767,50 @@
     return distanceMeters(ballPose, boatPose) <= BALL_CLAIM_SNAP_RADIUS;
   }
 
-  function snapEndPoseToBall(endPose) {
-    if (hasBallRoute()) return endPose;
-    var ballPose = getBallStartPose();
-    if (!isPoseNearBall(ballPose, endPose)) return endPose;
-    return {
-      x: ballPose.x,
-      y: ballPose.y,
-      rotation: endPose.rotation,
-    };
+  function snapBallToBoatIfNear(entityId, boatPose, ballRefPose) {
+    if (!canEdit() || hasBallRoute()) return false;
+    var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+    if (!entity || entity.type !== 'boat') return false;
+
+    var pose = boatPose || getBoatTargetPose(entityId);
+    var ballPose = ballRefPose || getBallStartPose();
+    if (!isPoseNearBall(ballPose, pose)) return false;
+    if (getBallHolderId() === entityId) return true;
+
+    setBallHolderId(entityId);
+    var ball = getBallEntity();
+    if (ball) {
+      ball.initial.x = pose.x;
+      ball.initial.y = pose.y;
+      ball.initial.rotation = 0;
+    }
+    var step = getCurrentStep();
+    if (step && step.poses) {
+      step.poses.ball = clone(pose);
+    }
+    state.tactic.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  function restoreBallSnapPreview(drag) {
+    if (!drag) return;
+    setBallHolderId(drag.previousHolderId || null);
+    var ball = getBallEntity();
+    if (ball && drag.ballRefPose) {
+      ball.initial.x = drag.ballRefPose.x;
+      ball.initial.y = drag.ballRefPose.y;
+      ball.initial.rotation = 0;
+    }
+    var step = getCurrentStep();
+    if (step && step.poses && drag.ballRefPose) {
+      step.poses.ball = clone(drag.ballRefPose);
+    }
+  }
+
+  function previewFreestyleBallSnap(drag, entityId, boatPose) {
+    if (!drag || drag.previousHolderId === entityId) return;
+    if (snapBallToBoatIfNear(entityId, boatPose, drag.ballRefPose)) return;
+    if (getBallHolderId() === entityId) restoreBallSnapPreview(drag);
   }
 
   function getClaimArcDistanceOnRoute(segment, ballPose) {
@@ -860,23 +902,8 @@
     return true;
   }
 
-  function claimBallPossessionImmediate(entityId, boatPose) {
-    if (!canEdit() || hasBallRoute()) return false;
-    var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
-    if (!entity || entity.type !== 'boat') return false;
-
-    var pose = boatPose || getBoatTargetPose(entityId);
-    var ballPose = getBallStartPose();
-    if (!isPoseNearBall(ballPose, pose)) return false;
-    if (getBallHolderId() === entityId) return false;
-
-    setBallHolderId(entityId);
-    var step = getCurrentStep();
-    if (step && step.poses) {
-      step.poses.ball = clone(pose);
-    }
-    state.tactic.updatedAt = new Date().toISOString();
-    return true;
+  function claimBallPossessionImmediate(entityId, boatPose, ballRefPose) {
+    return snapBallToBoatIfNear(entityId, boatPose, ballRefPose);
   }
 
   function getBallEntity() {
@@ -1133,25 +1160,291 @@
   }
 
   function isEntityHighlighted(entityId) {
-    if (state.actionMenu && state.actionMenu.entityId === entityId) return true;
     if (state.tool && state.tool.entityId === entityId) return true;
     if (state.drag && state.drag.entityId === entityId) return true;
+    if (state.keyboardFocusEntityId === entityId) return true;
     return false;
   }
 
-  function openEntityActions(entityId, options) {
-    if (!canEdit() || state.startPoseEdit) return;
-    var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
-    var atGhost = !!(options && options.atGhost);
-    var actions = getEntityActions(entity, { atGhost: atGhost });
-    if (actions.length === 0) return;
-    if (actions.length === 1 && !atGhost) {
-      closeActionMenu();
-      startBoatTool(actions[0], entityId);
+  function isTypingTarget(target) {
+    if (!target || !target.tagName) return false;
+    var tag = target.tagName;
+    return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || target.isContentEditable;
+  }
+
+  function modShortcutLabel() {
+    return /Mac|iPhone|iPad|iPod/.test(navigator.platform || '')
+      || /Mac OS/.test(navigator.userAgent || '')
+      ? '⌘'
+      : 'Ctrl';
+  }
+
+  function withShortcut(label, shortcut) {
+    if (!label) return shortcut || '';
+    if (!shortcut) return label;
+    return label + ' (' + shortcut + ')';
+  }
+
+  function getBoatEntities() {
+    return state.tactic.entities.filter(function (entity) {
+      return entity.type === 'boat';
+    });
+  }
+
+  function setKeyboardFocus(entityId) {
+    if (!entityId || !canEdit()) {
+      state.keyboardFocusEntityId = null;
       return;
     }
-    state.actionMenu = { entityId: entityId, atGhost: atGhost };
+    var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+    state.keyboardFocusEntityId = entity ? entity.id : null;
+  }
+
+  function cycleKeyboardFocus(direction) {
+    if (!canEdit()) return;
+    var entities = state.tactic.entities;
+    if (!entities.length) return;
+    var current = state.keyboardFocusEntityId;
+    var index = entities.findIndex(function (entity) { return entity.id === current; });
+    if (index < 0) index = direction > 0 ? -1 : 0;
+    var next = (index + direction + entities.length) % entities.length;
+    setKeyboardFocus(entities[next].id);
     renderAll();
+  }
+
+  function focusBoatByNumber(number) {
+    if (!canEdit() || number < 1) return false;
+    var boats = getBoatEntities();
+    var boat = boats[number - 1];
+    if (!boat) return false;
+    setKeyboardFocus(boat.id);
+    renderAll();
+    return true;
+  }
+
+  function focusBallEntity() {
+    if (!canEdit()) return false;
+    var ball = state.tactic.entities.find(function (entity) { return entity.type === 'ball'; });
+    if (!ball) return false;
+    setKeyboardFocus(ball.id);
+    renderAll();
+    return true;
+  }
+
+  function getFocusedEntityId() {
+    if (state.tool && state.tool.entityId) return state.tool.entityId;
+    if (state.keyboardFocusEntityId) return state.keyboardFocusEntityId;
+    return null;
+  }
+
+  function startToolOnFocused(mode) {
+    var entityId = getFocusedEntityId();
+    if (!entityId || !canEdit()) return;
+    startBoatTool(mode, entityId);
+  }
+
+  function clearFocusedEntityRoute() {
+    var entityId = getFocusedEntityId();
+    if (!entityId) return;
+    clearEntityRoute(entityId);
+  }
+
+  function selectAdjacentStep(delta) {
+    ensureSteps(state.tactic);
+    var index = state.playbackMode
+      ? getTransportStepIndex()
+      : state.tactic.currentStepIndex;
+    selectStep(clamp(index + delta, 0, state.tactic.steps.length - 1));
+  }
+
+  function nudgeTransport(deltaRatio) {
+    if (!state.playbackMode || state.isPlaying || !hasPlayableSteps()) return;
+    ensureTransportTimeline();
+    if (state.transport.duration <= 0) return;
+    var ratio = state.transport.time / state.transport.duration;
+    seekTransport(clamp(ratio + deltaRatio, 0, 1));
+  }
+
+  function toggleSettingsPanel() {
+    if (isExportDialogOpen() || state.shortcutsOpen) return;
+    state.settingsOpen = !state.settingsOpen;
+    renderSettings();
+  }
+
+  function triggerImportDialog() {
+    if (!canEdit()) return;
+    var input = document.getElementById('import-tactic-input');
+    if (input) input.click();
+  }
+
+  function toggleStepsSheet() {
+    if (!isPhoneLayout()) return;
+    var panel = document.getElementById('steps-panel');
+    if (!panel) return;
+    setStepsSheetExpanded(!panel.classList.contains('is-expanded'));
+  }
+
+  function isShortcutsDialogOpen() {
+    return !!state.shortcutsOpen;
+  }
+
+  function closeShortcutsDialog() {
+    if (!state.shortcutsOpen) return;
+    state.shortcutsOpen = false;
+    renderShortcutsDialog();
+  }
+
+  function openShortcutsDialog() {
+    if (isExportDialogOpen()) return;
+    state.settingsOpen = false;
+    renderSettings();
+    state.shortcutsOpen = true;
+    renderShortcutsDialog();
+  }
+
+  function toggleShortcutsDialog() {
+    if (state.shortcutsOpen) closeShortcutsDialog();
+    else openShortcutsDialog();
+  }
+
+  function helpGuideItems() {
+    return [
+      { titleKey: 'help.guide.move.title', bodyKey: 'help.guide.move.body' },
+      { titleKey: 'help.guide.turn.title', bodyKey: 'help.guide.turn.body' },
+      { titleKey: 'help.guide.pass.title', bodyKey: 'help.guide.pass.body' },
+      { titleKey: 'help.guide.vaarlijn.title', bodyKey: 'help.guide.vaarlijn.body' },
+      { titleKey: 'help.guide.pickup.title', bodyKey: 'help.guide.pickup.body' },
+    ];
+  }
+
+  function shortcutHelpGroups() {
+    var mod = modShortcutLabel();
+    return [
+      {
+        titleKey: 'shortcuts.group.general',
+        items: [
+          { keys: '?', actionKey: 'shortcuts.help' },
+          { keys: 'Esc', actionKey: 'shortcuts.escape' },
+          { keys: mod + '+Z', actionKey: 'shortcuts.undo' },
+          { keys: mod + '+Y / ' + mod + '+Shift+Z', actionKey: 'shortcuts.redo' },
+          { keys: 'S', actionKey: 'shortcuts.settings' },
+          { keys: mod + '+S', actionKey: 'shortcuts.export' },
+          { keys: mod + '+O', actionKey: 'shortcuts.import' },
+          { keys: 'M', actionKey: 'shortcuts.toggleSheet' },
+        ],
+      },
+      {
+        titleKey: 'shortcuts.group.mode',
+        items: [
+          { keys: 'E', actionKey: 'shortcuts.editMode' },
+          { keys: 'P', actionKey: 'shortcuts.playMode' },
+          { keys: 'Space / G', actionKey: 'shortcuts.go' },
+          { keys: '← / →', actionKey: 'shortcuts.prevNextStep' },
+          { keys: 'Home / End', actionKey: 'shortcuts.firstLastStep' },
+          { keys: 'H', actionKey: 'shortcuts.gotoStart' },
+          { keys: 'L', actionKey: 'shortcuts.setStart' },
+          { keys: 'R', actionKey: 'shortcuts.rename' },
+          { keys: 'Shift+Backspace', actionKey: 'shortcuts.deleteStep' },
+        ],
+      },
+      {
+        titleKey: 'shortcuts.group.playback',
+        items: [
+          { keys: 'Space', actionKey: 'shortcuts.playPause' },
+          { keys: ', / . / J / L', actionKey: 'shortcuts.seek' },
+          { keys: '[ / ]', actionKey: 'shortcuts.speed' },
+          { keys: '- / =', actionKey: 'shortcuts.speed' },
+        ],
+      },
+      {
+        titleKey: 'shortcuts.group.boats',
+        items: [
+          { keys: '1–9', actionKey: 'shortcuts.focusBoat' },
+          { keys: '0 / B', actionKey: 'shortcuts.focusBall' },
+          { keys: 'Tab / Shift+Tab', actionKey: 'shortcuts.cycleFocus' },
+          { keys: 'V', actionKey: 'shortcuts.vaar' },
+          { keys: 'T', actionKey: 'shortcuts.draai' },
+          { keys: 'F', actionKey: 'shortcuts.pass' },
+          { keys: 'W', actionKey: 'shortcuts.vaarlijn' },
+          { keys: 'X / Backspace', actionKey: 'shortcuts.clearRoute' },
+        ],
+      },
+    ];
+  }
+
+  function renderShortcutsDialog() {
+    var backdrop = document.getElementById('shortcuts-backdrop');
+    var body = document.getElementById('shortcuts-body');
+    if (!backdrop || !body) return;
+    if (!state.shortcutsOpen) {
+      backdrop.classList.add('hidden');
+      return;
+    }
+    backdrop.classList.remove('hidden');
+    body.innerHTML = '';
+
+    var guideSection = document.createElement('section');
+    guideSection.className = 'shortcuts-section help-guide-section';
+    var guideHeading = document.createElement('h3');
+    guideHeading.textContent = t('help.guide.title');
+    guideSection.appendChild(guideHeading);
+    var guideIntro = document.createElement('p');
+    guideIntro.className = 'help-guide-intro';
+    guideIntro.textContent = t('help.guide.intro');
+    guideSection.appendChild(guideIntro);
+    var guideList = document.createElement('div');
+    guideList.className = 'help-guide-list';
+    helpGuideItems().forEach(function (item) {
+      var article = document.createElement('article');
+      article.className = 'help-guide-item';
+      var title = document.createElement('h4');
+      title.textContent = t(item.titleKey);
+      var bodyText = document.createElement('p');
+      bodyText.textContent = t(item.bodyKey);
+      article.appendChild(title);
+      article.appendChild(bodyText);
+      guideList.appendChild(article);
+    });
+    guideSection.appendChild(guideList);
+    body.appendChild(guideSection);
+
+    var hotkeysHeading = document.createElement('h3');
+    hotkeysHeading.className = 'shortcuts-hotkeys-heading';
+    hotkeysHeading.textContent = t('shortcuts.hotkeys');
+    body.appendChild(hotkeysHeading);
+
+    shortcutHelpGroups().forEach(function (group) {
+      var section = document.createElement('section');
+      section.className = 'shortcuts-section';
+      var heading = document.createElement('h3');
+      heading.textContent = t(group.titleKey);
+      section.appendChild(heading);
+      var list = document.createElement('dl');
+      list.className = 'shortcuts-list';
+      group.items.forEach(function (item) {
+        var row = document.createElement('div');
+        row.className = 'shortcuts-row';
+        var dt = document.createElement('dt');
+        item.keys.split(' / ').forEach(function (key, index) {
+          if (index > 0) {
+            var sep = document.createElement('span');
+            sep.className = 'shortcuts-sep';
+            sep.textContent = '/';
+            dt.appendChild(sep);
+          }
+          var kbd = document.createElement('kbd');
+          kbd.textContent = key;
+          dt.appendChild(kbd);
+        });
+        var dd = document.createElement('dd');
+        dd.textContent = t(item.actionKey);
+        row.appendChild(dt);
+        row.appendChild(dd);
+        list.appendChild(row);
+      });
+      section.appendChild(list);
+      body.appendChild(section);
+    });
   }
 
   function canEdit() {
@@ -1423,11 +1716,11 @@
     }
     exitStartPoseEdit();
     state.stepRename = null;
+    state.keyboardFocusEntityId = null;
     ensureTransportTimeline();
     state.playbackMode = true;
     state.transport.time = 0;
     state.transport.playing = false;
-    closeActionMenu();
     clearPointerInteraction();
     setMessage(t('message.playbackMode'));
     renderAll();
@@ -1551,14 +1844,14 @@
       editModeBtn.classList.toggle('is-active', !state.playbackMode);
       editModeBtn.setAttribute('aria-pressed', !state.playbackMode ? 'true' : 'false');
       editModeBtn.disabled = state.isPlaying;
-      editModeBtn.title = t('header.edit.title');
+      editModeBtn.title = withShortcut(t('header.edit.title'), 'E');
     }
     if (playModeBtn) {
       playModeBtn.classList.toggle('is-active', state.playbackMode);
       playModeBtn.setAttribute('aria-pressed', state.playbackMode ? 'true' : 'false');
       playModeBtn.disabled = state.isPlaying || (!playable && !state.playbackMode);
       playModeBtn.title = playable
-        ? t('header.playback.titleOpen')
+        ? withShortcut(t('header.playback.titleOpen'), 'P')
         : t('header.playback.titleNoSteps');
     }
 
@@ -1579,11 +1872,20 @@
       timeEl.textContent = formatTransportTime(time) + ' / ' + formatTransportTime(duration);
     }
     if (speedLabel) speedLabel.textContent = transportSpeed() + '×';
-    if (speedDown) speedDown.disabled = !playable;
-    if (speedUp) speedUp.disabled = !playable;
+    if (speedDown) {
+      speedDown.disabled = !playable;
+      speedDown.title = withShortcut(t('transport.slower'), '[ / -');
+    }
+    if (speedUp) {
+      speedUp.disabled = !playable;
+      speedUp.title = withShortcut(t('transport.faster'), '] / =');
+    }
     if (playBtn) {
       playBtn.disabled = !playable;
-      playBtn.title = state.transport.playing ? t('transport.pause') : t('transport.play');
+      playBtn.title = withShortcut(
+        state.transport.playing ? t('transport.pause') : t('transport.play'),
+        'Space'
+      );
       playBtn.setAttribute('aria-label', playBtn.title);
     }
     if (iconPlay) iconPlay.classList.toggle('hidden', state.transport.playing);
@@ -1718,7 +2020,6 @@
         }
       }
       state.tactic.updatedAt = new Date().toISOString();
-      closeActionMenu();
       clearPointerInteraction();
       invalidateTransportTimeline();
       return;
@@ -1735,7 +2036,6 @@
     state.tactic.steps.push(nextStep);
     state.tactic.currentStepIndex = nextIndex;
     state.tactic.updatedAt = new Date().toISOString();
-    closeActionMenu();
     clearPointerInteraction();
     invalidateTransportTimeline();
   }
@@ -1754,7 +2054,6 @@
     recordHistory();
     state.isPlaying = true;
     state.playMode = 'go';
-    closeActionMenu();
     clearPointerInteraction();
     updateToolbar();
     renderStepsPanel();
@@ -1787,7 +2086,6 @@
     state.tactic.currentStepIndex = index;
     applyStepDiagram(index);
     state.currentTime = 0;
-    closeActionMenu();
     clearPointerInteraction();
     state.tactic.updatedAt = new Date().toISOString();
     setMessage(t('message.stepSelected', { name: state.tactic.steps[index].name }));
@@ -1859,7 +2157,6 @@
 
     applyStepDiagram(state.tactic.currentStepIndex);
     state.currentTime = 0;
-    closeActionMenu();
     clearPointerInteraction();
     state.tactic.updatedAt = new Date().toISOString();
     setMessage(t('message.stepDeleted', { name: deletedName }));
@@ -1999,6 +2296,7 @@
     if (goBtn) {
       goBtn.disabled = !canEdit() || !hasDraftRoutes() || state.startPoseEdit;
       goBtn.textContent = state.isPlaying && state.playMode === 'go' ? t('steps.go.busy') : t('steps.go');
+      goBtn.title = withShortcut(t('steps.go'), 'Space / G');
     }
     if (hint) {
       if (state.startPoseEdit) {
@@ -2050,20 +2348,35 @@
     var onStart = isOnStartStep();
     var editingStart = state.startPoseEdit && onStart;
     if (!onStart && state.startPoseEdit) state.startPoseEdit = false;
-    if (undoBtn) undoBtn.disabled = !editable || !state.history.past.length;
-    if (redoBtn) redoBtn.disabled = !editable || !state.history.future.length;
+    if (undoBtn) {
+      undoBtn.disabled = !editable || !state.history.past.length;
+      undoBtn.title = withShortcut(t('steps.undo'), modShortcutLabel() + '+Z');
+    }
+    if (redoBtn) {
+      redoBtn.disabled = !editable || !state.history.future.length;
+      redoBtn.title = withShortcut(t('steps.redo'), modShortcutLabel() + '+Y');
+    }
     if (startActions) startActions.classList.toggle('hidden', !onStart);
+    var predefinedBtn = document.getElementById('btn-predefined-flows');
+    if (predefinedBtn) {
+      predefinedBtn.disabled = !editable || !onStart || editingStart;
+      predefinedBtn.title = t('predefined.choose.title');
+      var predefinedLabel = predefinedBtn.querySelector('.btn-toolbar-label');
+      if (predefinedLabel) predefinedLabel.textContent = t('predefined.choose');
+    }
     if (setStartBtn) {
       setStartBtn.disabled = !editable || !onStart;
       setStartBtn.classList.toggle('is-editing', editingStart);
       var label = setStartBtn.querySelector('.btn-toolbar-label');
       if (label) label.textContent = editingStart ? t('steps.lock') : t('steps.setStart');
-      setStartBtn.title = editingStart
-        ? t('steps.setStart.titleConfirm')
-        : t('steps.setStart.title');
+      setStartBtn.title = withShortcut(
+        editingStart ? t('steps.setStart.titleConfirm') : t('steps.setStart.title'),
+        'L'
+      );
     }
     if (gotoStartBtn) {
       gotoStartBtn.disabled = !editable || editingStart;
+      gotoStartBtn.title = withShortcut(t('steps.gotoStart.title'), 'H');
     }
     var resetBtn = document.getElementById('btn-reset-all');
     if (resetBtn) resetBtn.disabled = !editable;
@@ -2074,6 +2387,16 @@
       indicator.classList.toggle('is-set', set);
       indicator.title = set ? t('steps.startSet') : t('steps.startNotSet');
     }
+    var shortcutsBtn = document.getElementById('btn-shortcuts');
+    if (shortcutsBtn) {
+      shortcutsBtn.title = withShortcut(t('shortcuts.help'), '?');
+      shortcutsBtn.setAttribute('aria-label', shortcutsBtn.title);
+    }
+    var settingsBtn = document.getElementById('btn-settings');
+    if (settingsBtn) settingsBtn.title = withShortcut(t('header.settings'), 'S');
+    var exportBtn = document.getElementById('btn-export-tactic');
+    if (exportBtn) exportBtn.title = withShortcut(t('settings.export'), modShortcutLabel() + '+S');
+    if (importBtn) importBtn.title = withShortcut(t('settings.import'), modShortcutLabel() + '+O');
     renderStepsPanel();
   }
 
@@ -2086,7 +2409,6 @@
     state.tactic = state.history.past.pop();
     ensureSteps(state.tactic);
     state.currentTime = 0;
-    closeActionMenu();
     clearPointerInteraction();
     renderAll();
   }
@@ -2100,7 +2422,6 @@
     state.tactic = state.history.future.pop();
     ensureSteps(state.tactic);
     state.currentTime = 0;
-    closeActionMenu();
     clearPointerInteraction();
     renderAll();
   }
@@ -2111,7 +2432,6 @@
     clearDraftRoutes();
     syncCurrentStepPoses();
     state.startPoseEdit = true;
-    closeActionMenu();
     setMessage(t('message.startEdit'));
     renderAll();
   }
@@ -2144,7 +2464,6 @@
     invalidateTransportTimeline();
     state.tactic.updatedAt = new Date().toISOString();
     state.startPoseEdit = false;
-    closeActionMenu();
     clearPointerInteraction();
     setMessage(t('message.startSet'));
     renderAll();
@@ -2186,7 +2505,6 @@
     }
     applyStepPoses(step);
     state.currentTime = 0;
-    closeActionMenu();
     clearPointerInteraction();
     state.tactic.updatedAt = new Date().toISOString();
     setMessage(t('message.gotoStart'));
@@ -2203,7 +2521,6 @@
     applyFormationReset(state.tactic);
     state.tactic.startPositions = null;
     state.currentTime = 0;
-    closeActionMenu();
     clearPointerInteraction();
     invalidateTransportTimeline();
     setMessage(t('message.resetAll'));
@@ -2228,17 +2545,30 @@
   function updateFieldScale() {
     var size = viewSizeMeters();
     var wrap = canvas.parentElement;
-    var header = document.querySelector('.header');
-    var headerH = header ? header.getBoundingClientRect().height : 48;
-    var appPad = isPhoneLayout() ? 16 : 32;
-    var peekReserve = getSheetPeekReserve();
-    var availW = Math.max(240, (wrap && wrap.clientWidth ? wrap.clientWidth : window.innerWidth) - 8);
-    var availH = Math.max(
-      180,
-      window.innerHeight - headerH - appPad - peekReserve - getSafeInset('top') - (isPhoneLayout() ? 0 : getSafeInset('bottom'))
-    );
-    var scaleW = (availW - CANVAS_PADDING * 2) / size.width;
-    var scaleH = (availH - CANVAS_PADDING * 2) / size.height;
+    var pad = canvasPadding();
+    var availW;
+    var availH;
+    var wrapW = wrap ? wrap.clientWidth : 0;
+    var wrapH = wrap ? wrap.clientHeight : 0;
+    // Require a real laid-out box; 0×N during first paint collapses CSS max-height:100%.
+    if (wrapW >= 32 && wrapH >= 32) {
+      availW = wrapW;
+      availH = wrapH;
+    } else {
+      var header = document.querySelector('.header');
+      var headerH = header ? header.getBoundingClientRect().height : 48;
+      var appPad = isPhoneLayout() ? 8 : 32;
+      var peekReserve = getSheetPeekReserve();
+      var rail = isPhoneLandscape() ? 104 : 0;
+      var sideSteps = isPhoneLandscape() ? 132 : 0;
+      availW = Math.max(240, window.innerWidth - rail - sideSteps - (isPhoneLayout() ? 0 : 8));
+      availH = Math.max(
+        180,
+        window.innerHeight - (isPhoneLandscape() ? 0 : headerH) - appPad - peekReserve - getSafeInset('top') - (isPhoneLayout() ? 0 : getSafeInset('bottom'))
+      );
+    }
+    var scaleW = (availW - pad * 2) / size.width;
+    var scaleH = (availH - pad * 2) / size.height;
     fieldScale = Math.max(10, Math.min(scaleW, scaleH));
   }
 
@@ -2246,14 +2576,14 @@
     if (isHalfField()) {
       // (x,y)→(y,x) maps heading θ to 90°−θ (not θ+90).
       return {
-        x: CANVAS_PADDING + pose.y * fieldScale,
-        y: CANVAS_PADDING + pose.x * fieldScale,
+        x: canvasPadding() + pose.y * fieldScale,
+        y: canvasPadding() + pose.x * fieldScale,
         rotation: 90 - pose.rotation,
       };
     }
     return {
-      x: CANVAS_PADDING + pose.x * fieldScale,
-      y: CANVAS_PADDING + pose.y * fieldScale,
+      x: canvasPadding() + pose.x * fieldScale,
+      y: canvasPadding() + pose.y * fieldScale,
       rotation: pose.rotation,
     };
   }
@@ -2261,14 +2591,14 @@
   function canvasToMeters(x, y, rotation) {
     if (isHalfField()) {
       return {
-        x: (y - CANVAS_PADDING) / fieldScale,
-        y: (x - CANVAS_PADDING) / fieldScale,
+        x: (y - canvasPadding()) / fieldScale,
+        y: (x - canvasPadding()) / fieldScale,
         rotation: rotation == null ? 0 : rotation,
       };
     }
     return {
-      x: (x - CANVAS_PADDING) / fieldScale,
-      y: (y - CANVAS_PADDING) / fieldScale,
+      x: (x - canvasPadding()) / fieldScale,
+      y: (y - canvasPadding()) / fieldScale,
       rotation: rotation == null ? 0 : rotation,
     };
   }
@@ -3179,6 +3509,7 @@
     var backdrop = document.getElementById('export-backdrop');
     var input = document.getElementById('export-name-input');
     if (!backdrop || !input) return;
+    closePredefinedDialog();
     input.value = state.tactic.name || t('tactic.defaultName');
     backdrop.classList.remove('hidden');
     window.setTimeout(function () {
@@ -3237,6 +3568,21 @@
     return null;
   }
 
+  function applyImportedTactic(raw) {
+    stopPlayback();
+    state.startPoseEdit = false;
+    if (state.playbackMode) exitPlaybackMode();
+    state.tactic = migrateTactic(raw);
+    state.tactic.id = uuid();
+    state.tactic.updatedAt = new Date().toISOString();
+    applyStepDiagram(state.tactic.currentStepIndex);
+    state.currentTime = 0;
+    state.history = { past: [], future: [] };
+    state.stepRename = null;
+    clearPointerInteraction();
+    invalidateTransportTimeline();
+  }
+
   function importTacticFromFile(file) {
     if (!file || state.isViewOnly) return;
     var reader = new FileReader();
@@ -3249,19 +3595,7 @@
           return;
         }
         if (!window.confirm(t('confirm.importOverwrite'))) return;
-        stopPlayback();
-        state.startPoseEdit = false;
-        if (state.playbackMode) exitPlaybackMode();
-        state.tactic = migrateTactic(raw);
-        state.tactic.id = uuid();
-        state.tactic.updatedAt = new Date().toISOString();
-        applyStepDiagram(state.tactic.currentStepIndex);
-        state.currentTime = 0;
-        state.history = { past: [], future: [] };
-        state.stepRename = null;
-        closeActionMenu();
-        clearPointerInteraction();
-        invalidateTransportTimeline();
+        applyImportedTactic(raw);
         setMessage(t('message.importSuccess'));
         renderAll();
       } catch (err) {
@@ -3272,6 +3606,102 @@
       setMessage(t('message.importError'));
     };
     reader.readAsText(file);
+  }
+
+  function listPredefinedFlows() {
+    var list = window.FlowboardPredefinedFlows;
+    return Array.isArray(list) ? list : [];
+  }
+
+  function predefinedFlowDisplayName(entry) {
+    if (!entry) return '';
+    if (entry.nameKey) {
+      var translated = t(entry.nameKey);
+      if (translated && translated !== entry.nameKey) return translated;
+    }
+    if (entry.payload && entry.payload.tactic && entry.payload.tactic.name) {
+      return entry.payload.tactic.name;
+    }
+    return entry.id || '';
+  }
+
+  function tacticHasUserWork() {
+    ensureSteps(state.tactic);
+    if (hasStartPosition()) return true;
+    if (state.tactic.steps.length > 1) return true;
+    if (state.startPoseEdit) return true;
+    var routes = captureDraftRoutes();
+    if (Object.keys(routes).length) return true;
+    var defaultName = t('tactic.defaultName');
+    if (state.tactic.name && state.tactic.name !== defaultName) return true;
+    return false;
+  }
+
+  function confirmReplaceTactic(messageKey) {
+    if (!tacticHasUserWork()) return true;
+    return window.confirm(t(messageKey || 'confirm.predefinedOverwrite'));
+  }
+
+  function isPredefinedDialogOpen() {
+    var backdrop = document.getElementById('predefined-backdrop');
+    return backdrop && !backdrop.classList.contains('hidden');
+  }
+
+  function closePredefinedDialog() {
+    var backdrop = document.getElementById('predefined-backdrop');
+    if (backdrop) backdrop.classList.add('hidden');
+  }
+
+  function renderPredefinedList() {
+    var list = document.getElementById('predefined-list');
+    if (!list) return;
+    list.innerHTML = '';
+
+    listPredefinedFlows().forEach(function (entry) {
+      if (!entry || !entry.id) return;
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn-toolbar predefined-item';
+      button.setAttribute('data-predefined-id', entry.id);
+      button.setAttribute('role', 'listitem');
+      button.textContent = predefinedFlowDisplayName(entry);
+      list.appendChild(button);
+    });
+  }
+
+  function openPredefinedDialog() {
+    if (!canEdit() || !isOnStartStep()) return;
+    closeExportDialog();
+    closeShortcutsDialog();
+    state.settingsOpen = false;
+    renderSettings();
+    renderPredefinedList();
+    var backdrop = document.getElementById('predefined-backdrop');
+    if (!backdrop) return;
+    backdrop.classList.remove('hidden');
+    var closeBtn = document.getElementById('btn-close-predefined');
+    if (closeBtn) {
+      window.setTimeout(function () { closeBtn.focus(); }, 0);
+    }
+  }
+
+  function loadPredefinedFlow(id) {
+    if (!canEdit() || !id) return;
+    var entry = listPredefinedFlows().find(function (item) { return item && item.id === id; });
+    if (!entry) {
+      setMessage(t('message.predefinedError'));
+      return;
+    }
+    var raw = parseTacticImportPayload(entry.payload);
+    if (!raw) {
+      setMessage(t('message.predefinedError'));
+      return;
+    }
+    if (!confirmReplaceTactic('confirm.predefinedOverwrite')) return;
+    closePredefinedDialog();
+    applyImportedTactic(raw);
+    setMessage(t('message.predefinedLoaded', { name: predefinedFlowDisplayName(entry) }));
+    renderAll();
   }
 
   function roundRect(context, x, y, width, height, radius) {
@@ -3341,13 +3771,13 @@
     ctx.setLineDash([fieldScale * 0.35, fieldScale * 0.28]);
     ctx.beginPath();
     if (half) {
-      var y = CANVAS_PADDING + xMeters * fieldScale;
-      ctx.moveTo(CANVAS_PADDING, y);
-      ctx.lineTo(CANVAS_PADDING + FIELD_WIDTH * fieldScale, y);
+      var y = canvasPadding() + xMeters * fieldScale;
+      ctx.moveTo(canvasPadding(), y);
+      ctx.lineTo(canvasPadding() + FIELD_WIDTH * fieldScale, y);
     } else {
-      var x = CANVAS_PADDING + xMeters * fieldScale;
-      ctx.moveTo(x, CANVAS_PADDING);
-      ctx.lineTo(x, CANVAS_PADDING + FIELD_WIDTH * fieldScale);
+      var x = canvasPadding() + xMeters * fieldScale;
+      ctx.moveTo(x, canvasPadding());
+      ctx.lineTo(x, canvasPadding() + FIELD_WIDTH * fieldScale);
     }
     ctx.stroke();
     ctx.restore();
@@ -3361,9 +3791,9 @@
     ctx.lineWidth = Math.max(1.5, fieldScale * 0.05);
     ctx.setLineDash([]);
     if (half) {
-      var y = CANVAS_PADDING + xMeters * fieldScale;
-      var left = CANVAS_PADDING;
-      var right = CANVAS_PADDING + FIELD_WIDTH * fieldScale;
+      var y = canvasPadding() + xMeters * fieldScale;
+      var left = canvasPadding();
+      var right = canvasPadding() + FIELD_WIDTH * fieldScale;
       ctx.beginPath();
       ctx.moveTo(left - tick * 0.15, y);
       ctx.lineTo(left + tick, y);
@@ -3371,9 +3801,9 @@
       ctx.lineTo(right - tick, y);
       ctx.stroke();
     } else {
-      var x = CANVAS_PADDING + xMeters * fieldScale;
-      var top = CANVAS_PADDING;
-      var bottom = CANVAS_PADDING + FIELD_WIDTH * fieldScale;
+      var x = canvasPadding() + xMeters * fieldScale;
+      var top = canvasPadding();
+      var bottom = canvasPadding() + FIELD_WIDTH * fieldScale;
       ctx.beginPath();
       ctx.moveTo(x, top - tick * 0.15);
       ctx.lineTo(x, top + tick);
@@ -3389,13 +3819,13 @@
     var thickness = Math.max(8, fieldScale * 0.35);
     ctx.fillStyle = '#f8fafc';
     if (isHalfField()) {
-      var goalX = CANVAS_PADDING + (FIELD_WIDTH * fieldScale) / 2 - goalSize / 2;
-      ctx.fillRect(goalX, CANVAS_PADDING - thickness / 2, goalSize, thickness);
+      var goalX = canvasPadding() + (FIELD_WIDTH * fieldScale) / 2 - goalSize / 2;
+      ctx.fillRect(goalX, canvasPadding() - thickness / 2, goalSize, thickness);
     } else {
-      var goalY = CANVAS_PADDING + (FIELD_WIDTH * fieldScale) / 2 - goalSize / 2;
-      ctx.fillRect(CANVAS_PADDING - thickness / 2, goalY, thickness, goalSize);
+      var goalY = canvasPadding() + (FIELD_WIDTH * fieldScale) / 2 - goalSize / 2;
+      ctx.fillRect(canvasPadding() - thickness / 2, goalY, thickness, goalSize);
       ctx.fillRect(
-        CANVAS_PADDING + FIELD_LENGTH * fieldScale - thickness / 2,
+        canvasPadding() + FIELD_LENGTH * fieldScale - thickness / 2,
         goalY,
         thickness,
         goalSize
@@ -3538,7 +3968,9 @@
   }
 
   function resetGoalTracking() {
-    state.ballWasInGoal = false;
+    // Sync huidige positie zonder te vieren, zodat een bal die al in het doel
+    // ligt (bijv. bij een nieuwe stap) geen herhaalde confetti triggert.
+    syncGoalTracking(false);
   }
 
   function drawBoat(pose, entity, selected) {
@@ -3601,15 +4033,22 @@
     }
   }
 
-  function drawBall(pose) {
+  function drawBall(pose, selected) {
     var radius = (BALL_DIAMETER * fieldScale) / 2;
     ctx.beginPath();
     ctx.arc(pose.x, pose.y, radius, 0, Math.PI * 2);
     ctx.fillStyle = '#f8fafc';
     ctx.fill();
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = Math.max(1.5, fieldScale * 0.05);
+    ctx.strokeStyle = selected ? '#38bdf8' : '#0f172a';
+    ctx.lineWidth = selected ? Math.max(2.5, fieldScale * 0.08) : Math.max(1.5, fieldScale * 0.05);
     ctx.stroke();
+    if (selected) {
+      ctx.beginPath();
+      ctx.arc(pose.x, pose.y, radius + Math.max(3, fieldScale * 0.1), 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+      ctx.lineWidth = Math.max(1.5, fieldScale * 0.05);
+      ctx.stroke();
+    }
   }
 
   function pathLineWidth() {
@@ -3869,8 +4308,9 @@
     updateFieldScale();
 
     var size = viewSizeMeters();
-    var width = size.width * fieldScale + CANVAS_PADDING * 2;
-    var height = size.height * fieldScale + CANVAS_PADDING * 2;
+    var pad = canvasPadding();
+    var width = size.width * fieldScale + pad * 2;
+    var height = size.height * fieldScale + pad * 2;
     canvas.width = width;
     canvas.height = height;
 
@@ -3878,10 +4318,11 @@
     ctx.fillRect(0, 0, width, height);
 
     ctx.fillStyle = '#0f766e';
-    roundRect(ctx, CANVAS_PADDING, CANVAS_PADDING, size.width * fieldScale, size.height * fieldScale, 14);
+    var pitchRadius = isPhoneLayout() ? 0 : 14;
+    roundRect(ctx, pad, pad, size.width * fieldScale, size.height * fieldScale, pitchRadius);
     ctx.fill();
     ctx.strokeStyle = '#e2e8f0';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = isPhoneLayout() ? 2 : 3;
     ctx.stroke();
 
     var settings = getSettings();
@@ -3897,16 +4338,16 @@
     if (isHalfField()) {
       ctx.fillStyle = 'rgba(203,213,225,0.55)';
       ctx.fillRect(
-        CANVAS_PADDING,
-        CANVAS_PADDING + HALF_LENGTH * fieldScale - 1,
+        canvasPadding(),
+        canvasPadding() + HALF_LENGTH * fieldScale - 1,
         FIELD_WIDTH * fieldScale,
         2
       );
     } else {
       ctx.fillStyle = 'rgba(203,213,225,0.55)';
       ctx.fillRect(
-        CANVAS_PADDING + HALF_LENGTH * fieldScale - 1,
-        CANVAS_PADDING,
+        canvasPadding() + HALF_LENGTH * fieldScale - 1,
+        canvasPadding(),
         2,
         FIELD_WIDTH * fieldScale
       );
@@ -3932,7 +4373,7 @@
       var selected = isEntityHighlighted(entity.id);
       var pose = metersToCanvas(sourcePose);
       if (entity.type === 'ball') {
-        drawBall(pose);
+        drawBall(pose, selected);
       } else {
         drawBoat(pose, entity, selected);
       }
@@ -4161,7 +4602,8 @@
     var langSection = document.createElement('section');
     langSection.className = 'settings-section';
     langSection.innerHTML = '<h3>' + t('settings.language') + '</h3>';
-    langSection.appendChild(createSelect(t('settings.language'), FlowboardI18n.getLocale(), [
+    langSection.appendChild(createSelect(t('settings.language'), FlowboardI18n.getLocalePreference(), [
+      { value: FlowboardI18n.AUTO, label: t('lang.auto') },
       { value: 'en', label: t('lang.en') },
       { value: 'nl', label: t('lang.nl') },
       { value: 'de', label: t('lang.de') },
@@ -4288,80 +4730,9 @@
   function renderAll() {
     persistTactic();
     renderCanvas();
-    renderBoatActionMenu();
     renderSettings();
+    renderShortcutsDialog();
     updateToolbar();
-  }
-
-  function renderBoatActionMenu() {
-    var menu = document.getElementById('boat-action-menu');
-    if (!menu) return;
-
-    var show = canEdit()
-      && !state.startPoseEdit
-      && state.actionMenu
-      && !state.drag
-      && !state.pendingPointer
-      && !state.tool;
-
-    if (!show) {
-      menu.classList.add('hidden');
-      return;
-    }
-
-    var entity = state.tactic.entities.find(function (item) {
-      return item.id === state.actionMenu.entityId;
-    });
-    var menuOptions = { atGhost: !!state.actionMenu.atGhost };
-    var actions = getEntityActions(entity, menuOptions);
-    if (!entity || actions.length === 0 || (actions.length < 2 && !state.actionMenu.atGhost)) {
-      menu.classList.add('hidden');
-      return;
-    }
-
-    var passBtn = menu.querySelector('[data-action="pass"]');
-    if (passBtn) passBtn.classList.toggle('hidden', actions.indexOf('pass') === -1);
-
-    var vaarlijnBtn = menu.querySelector('[data-action="vaarlijn"]');
-    if (vaarlijnBtn) vaarlijnBtn.classList.toggle('hidden', actions.indexOf('vaarlijn') === -1);
-
-    var draaiBtn = menu.querySelector('[data-action="draai"]');
-    if (draaiBtn) draaiBtn.classList.toggle('hidden', actions.indexOf('draai') === -1);
-
-    var vaarBtn = menu.querySelector('[data-action="vaar"]');
-    if (vaarBtn) {
-      vaarBtn.classList.toggle('hidden', actions.indexOf('vaar') === -1);
-      vaarBtn.textContent = entity.type === 'ball' ? t('boatMenu.gooi') : t('boatMenu.vaar');
-    }
-
-    var cancelBtn = menu.querySelector('[data-action="cancel"]');
-    if (cancelBtn) cancelBtn.classList.toggle('hidden', actions.indexOf('cancel') === -1);
-
-    var poses = getPosesAtTime();
-    var sourcePose = state.actionMenu.atGhost
-      ? (getGhostPose(entity.id) || poses[entity.id] || entity.initial)
-      : (poses[entity.id] || entity.initial);
-    var canvasPose = metersToCanvas(sourcePose);
-    var canvasRect = canvas.getBoundingClientRect();
-    var wrap = canvas.parentElement;
-    var wrapRect = wrap.getBoundingClientRect();
-    var scaleX = canvasRect.width / canvas.width;
-    var scaleY = canvasRect.height / canvas.height;
-    var left = (canvasRect.left - wrapRect.left) + canvasPose.x * scaleX;
-    var top = (canvasRect.top - wrapRect.top) + canvasPose.y * scaleY;
-
-    menu.classList.remove('hidden');
-    var menuWidth = menu.offsetWidth || 120;
-    var menuHeight = menu.offsetHeight || 88;
-    var pad = 8;
-    var maxLeft = Math.max(pad, wrapRect.width - menuWidth - pad);
-    var maxTop = Math.max(pad, wrapRect.height - menuHeight - pad);
-    // Prefer right of boat; flip left if near edge.
-    var preferredLeft = left + 12;
-    if (preferredLeft > maxLeft) preferredLeft = left - menuWidth - 12;
-    menu.style.left = clamp(preferredLeft, pad, maxLeft) + 'px';
-    menu.style.top = clamp(top - menuHeight / 2, pad, maxTop) + 'px';
-    menu.style.transform = 'none';
   }
 
   function rotationTowardPoint(fromPose, metersPoint) {
@@ -4373,7 +4744,7 @@
   }
 
   function startBoatTool(mode, entityId) {
-    entityId = entityId || (state.actionMenu && state.actionMenu.entityId);
+    entityId = entityId || getFocusedEntityId();
     if (!canEdit() || !entityId) return;
     if (state.startPoseEdit && mode === 'vaar') return;
     var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
@@ -4383,7 +4754,6 @@
       clearEntityRoute(entityId);
       return;
     }
-    closeActionMenu();
     collapseStepsSheet();
 
     var poses = getPosesAtTime();
@@ -4511,7 +4881,6 @@
     var entity = state.tactic.entities.find(function (item) { return item.id === tool.entityId; });
     if (!entity) {
       clearTool();
-      closeActionMenu();
       renderAll();
       return;
     }
@@ -4524,14 +4893,12 @@
       var endPose = tool.previewPose;
       if (!endPose || distanceMeters(tool.startPose, endPose) < 0.35) {
         clearTool();
-        closeActionMenu();
         renderAll();
         return;
       }
       if (entity.type === 'ball') {
         var ballStart = tool.startPose;
         clearTool();
-        closeActionMenu();
         if (tool.hasSegment) {
           recordHistory();
           updateBallSegmentEndPose(endPose);
@@ -4545,15 +4912,12 @@
         recordHistory();
         updateSegmentEndPose(tool.entityId, endPose);
         clearTool();
-        closeActionMenu();
         renderAll();
       } else {
         var startPose = tool.startPose;
         var entityId = tool.entityId;
         clearTool();
-        closeActionMenu();
         createRouteSegment(entityId, startPose, endPose);
-        closeActionMenu();
         renderAll();
       }
       return;
@@ -4569,7 +4933,6 @@
       var passTargetPose = getBoatTargetPose(passBoatId);
       var passStart = tool.startPose;
       clearTool();
-      closeActionMenu();
       createBallRouteSegment(passStart, passTargetPose, {
         passType: 'direct',
         targetEntityId: passBoatId,
@@ -4586,7 +4949,6 @@
         var vaarlijnEnd = tool.previewPose;
         if (!vaarlijnEnd || distanceMeters(tool.startPose, vaarlijnEnd) < 0.35) {
           clearTool();
-          closeActionMenu();
           renderAll();
           return;
         }
@@ -4604,7 +4966,6 @@
       var vaarlijnStart = tool.startPose;
       var vaarlijnTarget = tool.endPose;
       clearTool();
-      closeActionMenu();
       createBallRouteSegment(vaarlijnStart, vaarlijnTarget, {
         passType: 'space',
         targetEntityId: syncBoatId,
@@ -4629,7 +4990,6 @@
       syncCurrentStepPoses();
       state.tactic.updatedAt = new Date().toISOString();
       clearTool();
-      closeActionMenu();
       renderAll();
       return;
     }
@@ -4638,7 +4998,6 @@
       var dest = tool.previewPose;
       if (!dest) {
         clearTool();
-        closeActionMenu();
         renderAll();
         return;
       }
@@ -4651,7 +5010,6 @@
       syncCurrentStepPoses();
       state.tactic.updatedAt = new Date().toISOString();
       clearTool();
-      closeActionMenu();
       renderAll();
     }
   }
@@ -4892,7 +5250,6 @@
       rotation: startPose.rotation,
     });
     if (entity && entity.type === 'boat') {
-      end = snapEndPoseToBall(end);
       if (keptRotation != null) {
         end.rotation = keptRotation;
       } else {
@@ -4951,7 +5308,6 @@
       clearLongPress();
       collapseStepsSheet();
       state.pendingPointer = null;
-      closeActionMenu();
 
       if (pending.kind === 'freestyle') {
         var freestyleEntity = state.tactic.entities.find(function (item) {
@@ -4966,6 +5322,8 @@
           originPose: freestyleEntity ? clone(freestyleEntity.initial) : null,
           startX: pending.x,
           startY: pending.y,
+          previousHolderId: getBallHolderId(),
+          ballRefPose: clone(getBallStartPose()),
         };
       } else if (pending.kind === 'ghost') {
         recordHistory();
@@ -5018,14 +5376,15 @@
       if (state.drag.mode === 'freestyle') {
         if (!entity) return;
         var freestyleMeters = canvasToMeters(point.x, point.y, state.drag.rotation);
-        var freestylePose = snapEndPoseToBall(clampPoseToField({
+        var freestylePose = clampPoseToField({
           x: freestyleMeters.x + state.drag.offsetX,
           y: freestyleMeters.y + state.drag.offsetY,
           rotation: state.drag.rotation,
-        }));
+        });
         entity.initial.x = freestylePose.x;
         entity.initial.y = freestylePose.y;
         entity.initial.rotation = freestylePose.rotation;
+        previewFreestyleBallSnap(state.drag, state.drag.entityId, freestylePose);
         renderCanvas();
         return;
       }
@@ -5039,7 +5398,6 @@
         }
         updateSegmentControlPoint(state.drag.entityId, meters);
         renderCanvas();
-        renderBoatActionMenu();
         return;
       }
 
@@ -5052,7 +5410,6 @@
         );
         updateSegmentEndPose(state.drag.entityId, state.drag.previewPose);
         renderCanvas();
-        renderBoatActionMenu();
         return;
       }
 
@@ -5079,7 +5436,6 @@
 
       state.drag.previewPose = previewEndPose(entity, state.drag.startPose, meters);
       renderCanvas();
-      renderBoatActionMenu();
     }
 
     function onPointerDown(event) {
@@ -5108,7 +5464,6 @@
         var bendEntityId = getControlHandleAtCanvasPoint(x, y);
         if (bendEntityId) {
           clearTool();
-          closeActionMenu();
           collapseStepsSheet();
           state.drag = {
             mode: 'bend',
@@ -5133,14 +5488,12 @@
           canvas.classList.add('dragging');
           canvas.setPointerCapture(event.pointerId);
           renderCanvas();
-          renderBoatActionMenu();
           return;
         }
 
         var ballPick = getBallPickAtCanvasPoint(x, y);
         if (ballPick) {
           clearTool();
-          closeActionMenu();
           collapseStepsSheet();
           state.pendingPointer = {
             kind: 'ball-route',
@@ -5170,15 +5523,14 @@
           };
           canvas.setPointerCapture(event.pointerId);
           renderCanvas();
-          renderBoatActionMenu();
           return;
         }
       }
 
       var entityId = getEntityAtCanvasPoint(x, y);
       if (!entityId) {
-        closeActionMenu();
         clearTool();
+        state.keyboardFocusEntityId = null;
         renderAll();
         return;
       }
@@ -5213,7 +5565,6 @@
         };
         canvas.setPointerCapture(event.pointerId);
         renderCanvas();
-        renderBoatActionMenu();
         return;
       }
 
@@ -5243,7 +5594,6 @@
       };
       canvas.setPointerCapture(event.pointerId);
       renderCanvas();
-      renderBoatActionMenu();
     }
 
     function onPointerMove(event) {
@@ -5300,14 +5650,11 @@
           return;
         }
         if (pending.kind === 'ball-route') {
-          openEntityActions('ball');
-          return;
+          setKeyboardFocus('ball');
+        } else if (pending.entityId) {
+          setKeyboardFocus(pending.entityId);
         }
-        if (pending.kind === 'ghost') {
-          openEntityActions(pending.entityId, { atGhost: true });
-          return;
-        }
-        openEntityActions(pending.entityId);
+        renderAll();
         return;
       }
 
@@ -5325,6 +5672,7 @@
             entity.initial.y = drag.originPose.y;
             entity.initial.rotation = drag.originPose.rotation;
           }
+          restoreBallSnapPreview(drag);
           state.drag = null;
           releaseCapture(event);
           beginStartPoseRotate(drag.entityId);
@@ -5342,13 +5690,17 @@
             entity.initial.x = drag.originPose.x;
             entity.initial.y = drag.originPose.y;
             entity.initial.rotation = drag.originPose.rotation;
+            restoreBallSnapPreview(drag);
             recordHistory();
           }
           entity.initial.x = freestylePose.x;
           entity.initial.y = freestylePose.y;
           entity.initial.rotation = freestylePose.rotation;
           syncCurrentStepPoses();
-          claimBallPossessionImmediate(drag.entityId, freestylePose);
+          if (!claimBallPossessionImmediate(drag.entityId, freestylePose, drag.ballRefPose)) {
+            restoreBallSnapPreview(drag);
+            syncCurrentStepPoses();
+          }
           state.tactic.updatedAt = new Date().toISOString();
         }
         state.drag = null;
@@ -5455,59 +5807,76 @@
     });
 
     if (window.matchMedia) {
-      var mq = window.matchMedia(PHONE_LAYOUT_MQ);
-      var onChange = function () {
+      var onLayoutChange = function () {
         syncStepsSheetLayout();
         renderCanvas();
-        renderBoatActionMenu();
       };
-      if (mq.addEventListener) mq.addEventListener('change', onChange);
-      else if (mq.addListener) mq.addListener(onChange);
+      var mq = window.matchMedia(PHONE_LAYOUT_MQ);
+      if (mq.addEventListener) mq.addEventListener('change', onLayoutChange);
+      else if (mq.addListener) mq.addListener(onLayoutChange);
+      var landscapeMq = window.matchMedia(PHONE_LANDSCAPE_MQ);
+      if (landscapeMq.addEventListener) landscapeMq.addEventListener('change', onLayoutChange);
+      else if (landscapeMq.addListener) landscapeMq.addListener(onLayoutChange);
     }
 
     syncStepsSheetLayout();
   }
 
-  function setupBoatActionMenu() {
-    var menu = document.getElementById('boat-action-menu');
-    if (!menu) return;
-    menu.addEventListener('click', function (event) {
-      var button = event.target.closest('[data-action]');
-      if (!button || !canEdit()) return;
-      event.preventDefault();
-      event.stopPropagation();
-      startBoatTool(button.getAttribute('data-action'));
-    });
-  }
-
   function setupEvents() {
-    setupBoatActionMenu();
     setupStepsSheet();
-    document.getElementById('btn-settings').addEventListener('click', function () {
+
+    function on(id, eventName, handler) {
+      var el = document.getElementById(id);
+      if (!el) return null;
+      el.addEventListener(eventName, handler);
+      return el;
+    }
+
+    on('btn-settings', 'click', function () {
+      closeShortcutsDialog();
+      closePredefinedDialog();
       state.settingsOpen = true;
       renderSettings();
     });
-    document.getElementById('btn-undo').addEventListener('click', undo);
-    document.getElementById('btn-redo').addEventListener('click', redo);
-    document.getElementById('btn-set-start').addEventListener('click', toggleStartPoseEdit);
-    document.getElementById('btn-goto-start').addEventListener('click', gotoStartPosition);
-    document.getElementById('btn-export-tactic').addEventListener('click', exportTactic);
-    document.getElementById('btn-export-cancel').addEventListener('click', closeExportDialog);
-    document.getElementById('btn-export-confirm').addEventListener('click', confirmExportTactic);
-    document.getElementById('export-name-input').addEventListener('keydown', function (event) {
+    on('btn-shortcuts', 'click', function () {
+      closePredefinedDialog();
+      toggleShortcutsDialog();
+    });
+    on('btn-close-shortcuts', 'click', closeShortcutsDialog);
+    on('shortcuts-backdrop', 'click', function (event) {
+      if (event.target.id === 'shortcuts-backdrop') closeShortcutsDialog();
+    });
+    on('btn-undo', 'click', undo);
+    on('btn-redo', 'click', redo);
+    on('btn-set-start', 'click', toggleStartPoseEdit);
+    on('btn-predefined-flows', 'click', openPredefinedDialog);
+    on('btn-close-predefined', 'click', closePredefinedDialog);
+    on('predefined-backdrop', 'click', function (event) {
+      if (event.target.id === 'predefined-backdrop') closePredefinedDialog();
+    });
+    on('predefined-list', 'click', function (event) {
+      var button = event.target.closest('[data-predefined-id]');
+      if (!button) return;
+      loadPredefinedFlow(button.getAttribute('data-predefined-id'));
+    });
+    on('btn-goto-start', 'click', gotoStartPosition);
+    on('btn-export-tactic', 'click', exportTactic);
+    on('btn-export-cancel', 'click', closeExportDialog);
+    on('btn-export-confirm', 'click', confirmExportTactic);
+    on('export-name-input', 'keydown', function (event) {
       if (event.key === 'Enter') {
         event.preventDefault();
         confirmExportTactic();
       }
     });
-    document.getElementById('export-backdrop').addEventListener('click', function (event) {
+    on('export-backdrop', 'click', function (event) {
       if (event.target.id === 'export-backdrop') closeExportDialog();
     });
-    document.getElementById('btn-import-tactic').addEventListener('click', function () {
+    on('btn-import-tactic', 'click', function () {
       var input = document.getElementById('import-tactic-input');
       if (input) input.click();
     });
-    document.getElementById('btn-reset-all').addEventListener('click', resetAll);
+    on('btn-reset-all', 'click', resetAll);
     (function setupImportInput() {
       var input = document.getElementById('import-tactic-input');
       if (!input) return;
@@ -5516,20 +5885,20 @@
         input.value = '';
       });
     })();
-    document.getElementById('btn-go').addEventListener('click', runGoPlayback);
-    document.getElementById('btn-mode-edit').addEventListener('click', function () {
+    on('btn-go', 'click', runGoPlayback);
+    on('btn-mode-edit', 'click', function () {
       if (!state.playbackMode) return;
       exitPlaybackMode();
     });
-    document.getElementById('btn-mode-play').addEventListener('click', function () {
+    on('btn-mode-play', 'click', function () {
       if (state.playbackMode) return;
       enterPlaybackMode();
     });
-    document.getElementById('btn-transport-play').addEventListener('click', toggleTransportPlay);
-    document.getElementById('btn-speed-down').addEventListener('click', function () {
+    on('btn-transport-play', 'click', toggleTransportPlay);
+    on('btn-speed-down', 'click', function () {
       changeTransportSpeed(-1);
     });
-    document.getElementById('btn-speed-up').addEventListener('click', function () {
+    on('btn-speed-up', 'click', function () {
       changeTransportSpeed(1);
     });
     (function setupTransportScrubber() {
@@ -5548,17 +5917,25 @@
       scrubber.addEventListener('pointerup', endScrub);
       scrubber.addEventListener('change', endScrub);
     })();
-    document.getElementById('btn-close-settings').addEventListener('click', function () {
+    on('btn-close-settings', 'click', function () {
       state.settingsOpen = false;
       renderSettings();
     });
-    document.getElementById('settings-backdrop').addEventListener('click', function (event) {
+    on('settings-backdrop', 'click', function (event) {
       if (event.target.id === 'settings-backdrop') {
         state.settingsOpen = false;
         renderSettings();
       }
     });
     window.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && isShortcutsDialogOpen()) {
+        closeShortcutsDialog();
+        return;
+      }
+      if (event.key === 'Escape' && isPredefinedDialogOpen()) {
+        closePredefinedDialog();
+        return;
+      }
       if (event.key === 'Escape' && isExportDialogOpen()) {
         closeExportDialog();
         return;
@@ -5595,46 +5972,235 @@
         renderAll();
         return;
       }
-      if (event.key === 'Escape' && state.actionMenu) {
+      if (event.key === 'Escape' && state.keyboardFocusEntityId) {
         event.preventDefault();
-        closeActionMenu();
-        clearPointerInteraction();
+        state.keyboardFocusEntityId = null;
         renderAll();
         return;
       }
-      if (state.settingsOpen || state.isPlaying) return;
-      if (event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT' || event.target.tagName === 'TEXTAREA')) {
+
+      if (isTypingTarget(event.target)) return;
+      if (isExportDialogOpen()) return;
+
+      var key = event.key;
+      var lower = key.length === 1 ? key.toLowerCase() : key;
+      var mod = event.metaKey || event.ctrlKey;
+
+      if (key === '?' || (key === '/' && event.shiftKey)) {
+        event.preventDefault();
+        toggleShortcutsDialog();
         return;
       }
-      if (event.key === ' ') {
+
+      if (isShortcutsDialogOpen()) return;
+      if (state.settingsOpen) {
+        if (lower === 's' && !mod) {
+          event.preventDefault();
+          toggleSettingsPanel();
+        }
+        return;
+      }
+      if (state.isPlaying) return;
+
+      if (mod && lower === 'z' && !event.shiftKey) {
+        event.preventDefault();
+        if (canEdit()) undo();
+        return;
+      }
+      if (mod && (lower === 'y' || (lower === 'z' && event.shiftKey))) {
+        event.preventDefault();
+        if (canEdit()) redo();
+        return;
+      }
+      if (mod && lower === 's') {
+        event.preventDefault();
+        if (canEdit()) exportTactic();
+        return;
+      }
+      if (mod && lower === 'o') {
+        event.preventDefault();
+        triggerImportDialog();
+        return;
+      }
+
+      if (mod) return;
+
+      if (key === ' ') {
         event.preventDefault();
         if (state.playbackMode) toggleTransportPlay();
         else if (canEdit() && hasDraftRoutes()) runGoPlayback();
         return;
       }
-      if (event.key.toLowerCase() === 'g') {
+
+      if (lower === 'g') {
         if (canEdit() && hasDraftRoutes()) {
           event.preventDefault();
           runGoPlayback();
         }
         return;
       }
-      var mod = event.metaKey || event.ctrlKey;
-      if (!mod) return;
-      var key = event.key.toLowerCase();
-      if (key === 'z' && !event.shiftKey) {
+
+      if (lower === 'e') {
         event.preventDefault();
-        undo();
-      } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
+        if (state.playbackMode) exitPlaybackMode();
+        return;
+      }
+
+      if (lower === 'p') {
         event.preventDefault();
-        redo();
+        if (!state.playbackMode) enterPlaybackMode();
+        return;
+      }
+
+      if (lower === 's') {
+        event.preventDefault();
+        toggleSettingsPanel();
+        return;
+      }
+
+      if (lower === 'm') {
+        event.preventDefault();
+        toggleStepsSheet();
+        return;
+      }
+
+      if (key === 'ArrowLeft') {
+        event.preventDefault();
+        selectAdjacentStep(-1);
+        return;
+      }
+      if (key === 'ArrowRight') {
+        event.preventDefault();
+        selectAdjacentStep(1);
+        return;
+      }
+      if (key === 'Home') {
+        event.preventDefault();
+        if (state.playbackMode) seekTransport(0);
+        else selectStep(0);
+        return;
+      }
+      if (key === 'End') {
+        event.preventDefault();
+        ensureSteps(state.tactic);
+        if (state.playbackMode) seekTransport(1);
+        else selectStep(state.tactic.steps.length - 1);
+        return;
+      }
+
+      if (state.playbackMode) {
+        if (key === ',' || lower === 'j') {
+          event.preventDefault();
+          nudgeTransport(-0.05);
+          return;
+        }
+        if (key === '.' || lower === 'l') {
+          event.preventDefault();
+          nudgeTransport(0.05);
+          return;
+        }
+        if (key === '[' || key === '-' || key === '_') {
+          event.preventDefault();
+          changeTransportSpeed(-1);
+          return;
+        }
+        if (key === ']' || key === '=' || key === '+') {
+          event.preventDefault();
+          changeTransportSpeed(1);
+          return;
+        }
+      }
+
+      if (!canEdit()) return;
+
+      if (lower === 'h') {
+        event.preventDefault();
+        gotoStartPosition();
+        return;
+      }
+      if (lower === 'l') {
+        event.preventDefault();
+        toggleStartPoseEdit();
+        return;
+      }
+      if (lower === 'r') {
+        event.preventDefault();
+        beginStepRename(state.tactic.currentStepIndex);
+        return;
+      }
+      if ((key === 'Backspace' || key === 'Delete') && event.shiftKey) {
+        event.preventDefault();
+        deleteLastStep();
+        return;
+      }
+      if (key === 'Tab') {
+        event.preventDefault();
+        cycleKeyboardFocus(event.shiftKey ? -1 : 1);
+        return;
+      }
+      if (lower === 'b' || key === '0') {
+        event.preventDefault();
+        focusBallEntity();
+        return;
+      }
+      if (/^[1-9]$/.test(key)) {
+        event.preventDefault();
+        focusBoatByNumber(Number(key));
+        return;
+      }
+      if (lower === 'v') {
+        event.preventDefault();
+        startToolOnFocused('vaar');
+        return;
+      }
+      if (lower === 't') {
+        event.preventDefault();
+        startToolOnFocused('draai');
+        return;
+      }
+      if (lower === 'f') {
+        event.preventDefault();
+        startToolOnFocused('pass');
+        return;
+      }
+      if (lower === 'w') {
+        event.preventDefault();
+        startToolOnFocused('vaarlijn');
+        return;
+      }
+      if (lower === 'x' || key === 'Backspace' || key === 'Delete') {
+        event.preventDefault();
+        clearFocusedEntityRoute();
+        return;
       }
     });
     window.addEventListener('resize', function () {
       syncStepsSheetLayout();
       renderCanvas();
-      renderBoatActionMenu();
     });
+  }
+
+  function setupCanvasResizeObserver() {
+    var wrap = canvas && canvas.parentElement;
+    if (!wrap || typeof ResizeObserver !== 'function') return;
+    var lastW = 0;
+    var lastH = 0;
+    var scheduled = false;
+    var observer = new ResizeObserver(function () {
+      var w = wrap.clientWidth;
+      var h = wrap.clientHeight;
+      if (w < 32 || h < 32) return;
+      if (Math.abs(w - lastW) < 1 && Math.abs(h - lastH) < 1) return;
+      lastW = w;
+      lastH = h;
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(function () {
+        scheduled = false;
+        renderCanvas();
+      });
+    });
+    observer.observe(wrap);
   }
 
   function init() {
@@ -5645,6 +6211,7 @@
         });
       }
       syncDefaultStepNames();
+      if (isPredefinedDialogOpen()) renderPredefinedList();
       renderAll();
     };
     if (window.location.hash) {
@@ -5655,8 +6222,13 @@
     else state.tactic = createInitialTactic();
     setupCanvasDrag();
     setupEvents();
+    setupCanvasResizeObserver();
     syncStepsSheetLayout();
     renderAll();
+    // Second pass after flex/sheet layout so the canvas isn't stuck at 0×CSS size.
+    requestAnimationFrame(function () {
+      renderCanvas();
+    });
   }
 
   init();

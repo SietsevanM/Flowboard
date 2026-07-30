@@ -8,7 +8,7 @@ No installation and no server required:
 
 1. Open `index.html` directly in your browser.
 2. Drag boats and the ball on the field.
-3. Set ghost positions, then press **Go** to save a step.
+3. Set ghost positions, then press **Next Step** to save a step.
 4. Switch to **Play** to scrub and replay the tactic.
 5. Tactics are saved automatically in `localStorage`.
 
@@ -25,7 +25,7 @@ Flowboard lets you design canoe polo plays as a sequence of steps and play them 
 
 **Editing**
 
-- Drag boats to ghost targets, then confirm with **Go** to lock in a step
+- Drag boats to ghost targets, then confirm with **Next Step** to lock in a step
 - Rename, delete, and reorder steps; jump back to the start of a step
 - Undo / redo for editing mistakes
 
@@ -46,11 +46,9 @@ Flowboard lets you design canoe polo plays as a sequence of steps and play them 
 ### Moving players
 
 - Drag a boat to place a **ghost** at the destination. A route line shows the planned path.
-- Click a boat to open its action menu:
-  - **Paddle** — draw a movement route
-  - **Turn** — change facing without (or in addition to) paddling
-  - **Cancel** — clear the boat’s current draft route
-- Press **Go** to animate all draft routes and save them as the next step.
+- Drag the ghost to fine-tune the finish, or drag the handle on the line to bend the path.
+- Clear a draft route with **X** / **Backspace** (with that boat selected), or turn in place with **T**.
+- Press **Next Step** to animate all draft routes and save them as the next step.
 - In start-position mode, drag to move and click a boat to rotate, then **Lock in**.
 
 ### Possession
@@ -63,14 +61,13 @@ Flowboard lets you design canoe polo plays as a sequence of steps and play them 
 
 ### Moving the ball
 
-Click the ball for throw options, or drag it directly on the field:
+Drag the ball on the field — where you drop it decides the throw type:
 
 | Action | How | Result |
 |---|---|---|
-| **Pass** | Choose Pass, or drag the ball onto a teammate | Direct throw to that player; possession transfers on arrival |
+| **Pass** | Drag the ball onto a teammate | Direct throw to that player; possession transfers on arrival |
 | **Pass into a route** | Drag the ball onto a teammate’s movement line | Ball meets the receiver mid-route; timing is synced to that point |
-| **Through ball** | Choose Through ball, click a spot, then optionally a receiver | Throw into space; optional sync so the receiver arrives with the ball |
-| **Throw** | Choose Throw, or drag the ball onto empty field | Free throw to a point; possession is released |
+| **Throw** | Drag the ball onto empty field | Free throw to a point; possession is released |
 
 Pass routes are colour-coded on the canvas (direct, into-route, into-space, and free) so you can tell throw types apart while editing.
 ## Files

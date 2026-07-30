@@ -1,0 +1,1175 @@
+(function (global) {
+  'use strict';
+
+  /**
+   * Predefined / base flows for Flowboard.
+   * To add a flow:
+   * 1. Export from the app as .flowboard.json
+   * 2. Save a copy under predefined/ (optional, for reference)
+   * 3. Append an entry below with id, nameKey, and the full export JSON as payload
+   */
+  global.FlowboardPredefinedFlows = [
+  {
+    "id": "waaier",
+    "nameKey": "predefined.waaier.name",
+    "payload": {
+      "format": "flowboard-tactic",
+      "version": 1,
+      "exportedAt": "2026-07-30T09:43:12.992Z",
+      "tactic": {
+        "id": "20bab360-d27f-4c2b-8aa0-62f2aea913a1",
+        "name": "Waaier",
+        "sport": "canoe-polo",
+        "field": {
+          "sport": "canoe-polo",
+          "width": 35,
+          "height": 23,
+          "goalWidth": 1.5
+        },
+        "settings": {
+          "fieldMode": "half",
+          "showLine4m": false,
+          "showLine6m": true,
+          "showNumbers": true,
+          "defenseFormation": "1-3-1",
+          "attackFormation": "fan",
+          "showAttack": true,
+          "showDefense": true,
+          "motionUnits": "kmh",
+          "motionTimingMode": "boatSpeed",
+          "boatSpeedSyncArrival": true,
+          "stepDuration": 2,
+          "boatSpeed": 10,
+          "boatAcceleration": 20,
+          "boatRotationSpeed": 90,
+          "ballSpeed": 25,
+          "defense": {
+            "boatCount": 5,
+            "colors": [
+              "#ef4444"
+            ]
+          },
+          "attack": {
+            "boatCount": 5,
+            "colors": [
+              "#facc15",
+              "#111111"
+            ]
+          }
+        },
+        "entities": [
+          {
+            "id": "boat-defense-1",
+            "type": "boat",
+            "team": "defense",
+            "label": "1",
+            "color": "#ef4444",
+            "colors": [
+              "#ef4444"
+            ],
+            "initial": {
+              "x": 0.25,
+              "y": 11.5,
+              "rotation": 0
+            }
+          },
+          {
+            "id": "boat-defense-2",
+            "type": "boat",
+            "team": "defense",
+            "label": "2",
+            "color": "#ef4444",
+            "colors": [
+              "#ef4444"
+            ],
+            "initial": {
+              "x": 5.301612461459566,
+              "y": 10.736148501419382,
+              "rotation": 43.85394200921258
+            }
+          },
+          {
+            "id": "boat-defense-3",
+            "type": "boat",
+            "team": "defense",
+            "label": "3",
+            "color": "#ef4444",
+            "colors": [
+              "#ef4444"
+            ],
+            "initial": {
+              "x": 5.152093400171236,
+              "y": 12.836301507693477,
+              "rotation": 71.79469325391871
+            }
+          },
+          {
+            "id": "boat-defense-4",
+            "type": "boat",
+            "team": "defense",
+            "label": "4",
+            "color": "#ef4444",
+            "colors": [
+              "#ef4444"
+            ],
+            "initial": {
+              "x": 4.479257624373749,
+              "y": 15.52848577686383,
+              "rotation": 79.42689824317993
+            }
+          },
+          {
+            "id": "boat-defense-5",
+            "type": "boat",
+            "team": "defense",
+            "label": "5",
+            "color": "#ef4444",
+            "colors": [
+              "#ef4444"
+            ],
+            "initial": {
+              "x": 6.3980855775739895,
+              "y": 15.771530190052822,
+              "rotation": 118.33967986046275
+            }
+          },
+          {
+            "id": "boat-attack-1",
+            "type": "boat",
+            "team": "attack",
+            "label": "1",
+            "color": "#facc15",
+            "colors": [
+              "#facc15",
+              "#111111"
+            ],
+            "initial": {
+              "x": 1.8190643256188674,
+              "y": 9.36512873471226,
+              "rotation": 125.4102357729222
+            }
+          },
+          {
+            "id": "boat-attack-2",
+            "type": "boat",
+            "team": "attack",
+            "label": "2",
+            "color": "#facc15",
+            "colors": [
+              "#facc15",
+              "#111111"
+            ],
+            "initial": {
+              "x": 6.778113191681831,
+              "y": 9.651796504114659,
+              "rotation": 153.24757449156954
+            }
+          },
+          {
+            "id": "boat-attack-3",
+            "type": "boat",
+            "team": "attack",
+            "label": "3",
+            "color": "#facc15",
+            "colors": [
+              "#facc15",
+              "#111111"
+            ],
+            "initial": {
+              "x": 7.183060649337726,
+              "y": 13.203984081492205,
+              "rotation": 165.99421638620288
+            }
+          },
+          {
+            "id": "boat-attack-4",
+            "type": "boat",
+            "team": "attack",
+            "label": "4",
+            "color": "#facc15",
+            "colors": [
+              "#facc15",
+              "#111111"
+            ],
+            "initial": {
+              "x": 7.475868811027373,
+              "y": 17.45414535828429,
+              "rotation": -138.32079474760903
+            }
+          },
+          {
+            "id": "boat-attack-5",
+            "type": "boat",
+            "team": "attack",
+            "label": "5",
+            "color": "#facc15",
+            "colors": [
+              "#facc15",
+              "#111111"
+            ],
+            "initial": {
+              "x": 4.329738563085418,
+              "y": 17.105158508577023,
+              "rotation": -125.46731979346384
+            }
+          },
+          {
+            "id": "ball",
+            "type": "ball",
+            "team": "neutral",
+            "label": "Bal",
+            "color": "#ffffff",
+            "colors": [
+              "#ffffff"
+            ],
+            "initial": {
+              "x": 0.0684453163679973,
+              "y": 11.191077787644929,
+              "rotation": 0
+            }
+          }
+        ],
+        "tracks": [
+          {
+            "entityId": "boat-defense-1",
+            "segments": []
+          },
+          {
+            "entityId": "boat-defense-2",
+            "segments": []
+          },
+          {
+            "entityId": "boat-defense-3",
+            "segments": []
+          },
+          {
+            "entityId": "boat-defense-4",
+            "segments": []
+          },
+          {
+            "entityId": "boat-defense-5",
+            "segments": []
+          },
+          {
+            "entityId": "boat-attack-1",
+            "segments": []
+          },
+          {
+            "entityId": "boat-attack-2",
+            "segments": []
+          },
+          {
+            "entityId": "boat-attack-3",
+            "segments": []
+          },
+          {
+            "entityId": "boat-attack-4",
+            "segments": []
+          },
+          {
+            "entityId": "boat-attack-5",
+            "segments": []
+          },
+          {
+            "entityId": "ball",
+            "segments": []
+          }
+        ],
+        "interactions": [],
+        "duration": 12,
+        "createdAt": "2026-07-29T19:54:50.112Z",
+        "updatedAt": "2026-07-30T09:43:12.991Z",
+        "startPositions": null,
+        "steps": [
+          {
+            "id": "b26956b1-682b-4ab1-8709-2f50149cf3d1",
+            "name": "Start",
+            "poses": {
+              "boat-defense-1": {
+                "x": 0.25,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-defense-2": {
+                "x": 3.75,
+                "y": 8.75,
+                "rotation": 0
+              },
+              "boat-defense-3": {
+                "x": 3.75,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-defense-4": {
+                "x": 3.75,
+                "y": 14.25,
+                "rotation": 0
+              },
+              "boat-defense-5": {
+                "x": 7.25,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-attack-1": {
+                "x": 7.3013122215478665,
+                "y": 1.8,
+                "rotation": 126.96923734712237
+              },
+              "boat-attack-2": {
+                "x": 14.696856686479373,
+                "y": 2.6095652365587867,
+                "rotation": 148.8293825266079
+              },
+              "boat-attack-3": {
+                "x": 17.5,
+                "y": 11.5,
+                "rotation": 180
+              },
+              "boat-attack-4": {
+                "x": 14.696856686479373,
+                "y": 20.390434763441213,
+                "rotation": -148.8293825266079
+              },
+              "boat-attack-5": {
+                "x": 7.3013122215478665,
+                "y": 21.2,
+                "rotation": -126.96923734712237
+              },
+              "ball": {
+                "x": 17.5,
+                "y": 11.5,
+                "rotation": 180
+              }
+            },
+            "routes": null,
+            "ballHolderId": "boat-attack-3"
+          },
+          {
+            "id": "32cf9269-d892-4ab1-91ae-601e2963763e",
+            "name": "Stap 1",
+            "poses": {
+              "boat-defense-1": {
+                "x": 0.25,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-defense-2": {
+                "x": 3.75,
+                "y": 8.75,
+                "rotation": 0
+              },
+              "boat-defense-3": {
+                "x": 3.75,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-defense-4": {
+                "x": 3.75,
+                "y": 14.25,
+                "rotation": 0
+              },
+              "boat-defense-5": {
+                "x": 7.25,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-attack-1": {
+                "x": 7.3013122215478665,
+                "y": 1.8,
+                "rotation": 126.96923734712237
+              },
+              "boat-attack-2": {
+                "x": 14.696856686479373,
+                "y": 2.6095652365587867,
+                "rotation": 148.8293825266079
+              },
+              "boat-attack-3": {
+                "x": 17.5,
+                "y": 11.5,
+                "rotation": 180
+              },
+              "boat-attack-4": {
+                "x": 14.696856686479373,
+                "y": 20.390434763441213,
+                "rotation": -148.8293825266079
+              },
+              "boat-attack-5": {
+                "x": 7.3013122215478665,
+                "y": 21.2,
+                "rotation": -126.96923734712237
+              },
+              "ball": {
+                "x": 14.696856686479373,
+                "y": 20.390434763441213,
+                "rotation": 0
+              }
+            },
+            "routes": {
+              "ball": {
+                "startTime": 0,
+                "endTime": 1.3423506889870749,
+                "startPose": {
+                  "x": 17.5,
+                  "y": 11.5,
+                  "rotation": 0
+                },
+                "endPose": {
+                  "x": 14.696856686479373,
+                  "y": 20.390434763441213,
+                  "rotation": 0
+                },
+                "controlOut": null,
+                "controlIn": null,
+                "passType": "direct",
+                "targetEntityId": "boat-attack-4",
+                "syncToEntityId": null,
+                "syncArcDistance": null,
+                "throwDelay": 0,
+                "travelDuration": 1.3423506889870749
+              }
+            },
+            "ballHolderId": "boat-attack-4"
+          },
+          {
+            "id": "85ab343f-b6af-4f52-9130-3a2abae041f6",
+            "name": "Stap 2",
+            "poses": {
+              "boat-defense-1": {
+                "x": 0.25,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-defense-2": {
+                "x": 3.75,
+                "y": 8.75,
+                "rotation": 0
+              },
+              "boat-defense-3": {
+                "x": 3.75,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-defense-4": {
+                "x": 4.479257624373749,
+                "y": 15.52848577686383,
+                "rotation": 79.42689824317993
+              },
+              "boat-defense-5": {
+                "x": 7.25,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-attack-1": {
+                "x": 7.3013122215478665,
+                "y": 1.8,
+                "rotation": 126.96923734712237
+              },
+              "boat-attack-2": {
+                "x": 14.696856686479373,
+                "y": 2.6095652365587867,
+                "rotation": 148.8293825266079
+              },
+              "boat-attack-3": {
+                "x": 17.5,
+                "y": 11.5,
+                "rotation": 180
+              },
+              "boat-attack-4": {
+                "x": 14.696856686479373,
+                "y": 20.390434763441213,
+                "rotation": -148.8293825266079
+              },
+              "boat-attack-5": {
+                "x": 4.329738563085418,
+                "y": 17.105158508577023,
+                "rotation": -125.46731979346384
+              },
+              "ball": {
+                "x": 4.329738563085418,
+                "y": 17.105158508577023,
+                "rotation": -125.46731979346384
+              }
+            },
+            "routes": {
+              "boat-defense-4": {
+                "startTime": 0,
+                "endTime": 1.8213999559245897,
+                "startPose": {
+                  "x": 3.75,
+                  "y": 14.25,
+                  "rotation": 0
+                },
+                "endPose": {
+                  "x": 4.479257624373749,
+                  "y": 15.52848577686383,
+                  "rotation": 79.42689824317993
+                },
+                "controlOut": {
+                  "x": 4.240616682729258,
+                  "y": 14.25
+                },
+                "controlIn": {
+                  "x": 4.389234428784931,
+                  "y": 15.04619898083035
+                }
+              },
+              "boat-attack-5": {
+                "startTime": 0,
+                "endTime": 1.8213999559245897,
+                "startPose": {
+                  "x": 7.3013122215478665,
+                  "y": 21.2,
+                  "rotation": -126.96923734712237
+                },
+                "endPose": {
+                  "x": 4.329738563085418,
+                  "y": 17.105158508577023,
+                  "rotation": -125.46731979346384
+                },
+                "controlOut": {
+                  "x": 6.28708565544441,
+                  "y": 19.852571292298755
+                },
+                "controlIn": {
+                  "x": 5.30830003856796,
+                  "y": 18.478707593403946
+                }
+              },
+              "ball": {
+                "startTime": 0,
+                "endTime": 1.3480360161654097,
+                "startPose": {
+                  "x": 14.696856686479373,
+                  "y": 20.390434763441213,
+                  "rotation": 0
+                },
+                "endPose": {
+                  "x": 5.485282214599534,
+                  "y": 18.722507995431304,
+                  "rotation": 0
+                },
+                "controlOut": null,
+                "controlIn": null,
+                "passType": "route",
+                "targetEntityId": "boat-attack-5",
+                "syncToEntityId": "boat-attack-5",
+                "syncArcDistance": 3.071859785672022,
+                "throwDelay": 0,
+                "travelDuration": 1.3480360161654097
+              }
+            },
+            "ballHolderId": "boat-attack-5"
+          },
+          {
+            "id": "db054947-36ea-49a7-bfbb-a3544fc3d1a5",
+            "name": "Stap 3",
+            "poses": {
+              "boat-defense-1": {
+                "x": 0.25,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-defense-2": {
+                "x": 3.75,
+                "y": 8.75,
+                "rotation": 0
+              },
+              "boat-defense-3": {
+                "x": 4.161529619136046,
+                "y": 11.502673189169274,
+                "rotation": 0.5582559028204773
+              },
+              "boat-defense-4": {
+                "x": 4.479257624373749,
+                "y": 15.52848577686383,
+                "rotation": 79.42689824317993
+              },
+              "boat-defense-5": {
+                "x": 6.3980855775739895,
+                "y": 15.771530190052822,
+                "rotation": 118.33967986046275
+              },
+              "boat-attack-1": {
+                "x": 7.3013122215478665,
+                "y": 1.8,
+                "rotation": 126.96923734712237
+              },
+              "boat-attack-2": {
+                "x": 14.696856686479373,
+                "y": 2.6095652365587867,
+                "rotation": 148.8293825266079
+              },
+              "boat-attack-3": {
+                "x": 17.5,
+                "y": 11.5,
+                "rotation": 180
+              },
+              "boat-attack-4": {
+                "x": 7.475868811027373,
+                "y": 17.45414535828429,
+                "rotation": -138.32079474760903
+              },
+              "boat-attack-5": {
+                "x": 4.329738563085418,
+                "y": 17.105158508577023,
+                "rotation": -125.46731979346384
+              },
+              "ball": {
+                "x": 7.475868811027372,
+                "y": 17.454145358284286,
+                "rotation": 0
+              }
+            },
+            "routes": {
+              "boat-defense-3": {
+                "startTime": 0,
+                "endTime": 2.8062562593830775,
+                "startPose": {
+                  "x": 3.75,
+                  "y": 11.5,
+                  "rotation": 0
+                },
+                "endPose": {
+                  "x": 4.161529619136046,
+                  "y": 11.502673189169274,
+                  "rotation": 0.5582559028204773
+                },
+                "controlOut": {
+                  "x": 3.887179433738198,
+                  "y": 11.5
+                },
+                "controlIn": {
+                  "x": 4.024356696836562,
+                  "y": 11.501336615732384
+                }
+              },
+              "boat-defense-5": {
+                "startTime": 0,
+                "endTime": 2.8062562593830775,
+                "startPose": {
+                  "x": 7.25,
+                  "y": 11.5,
+                  "rotation": 0
+                },
+                "endPose": {
+                  "x": 6.3980855775739895,
+                  "y": 15.771530190052822,
+                  "rotation": 118.33967986046275
+                },
+                "controlOut": {
+                  "x": 8.701884918444913,
+                  "y": 11.5
+                },
+                "controlIn": {
+                  "x": 7.087292248299004,
+                  "y": 14.493655399067439
+                }
+              },
+              "boat-attack-4": {
+                "startTime": 0,
+                "endTime": 2.8062562593830775,
+                "startPose": {
+                  "x": 14.696856686479373,
+                  "y": 20.390434763441213,
+                  "rotation": -148.8293825266079
+                },
+                "endPose": {
+                  "x": 7.475868811027373,
+                  "y": 17.45414535828429,
+                  "rotation": -138.32079474760903
+                },
+                "controlOut": {
+                  "x": 11.858171551566926,
+                  "y": 18.67325499199343
+                },
+                "controlIn": {
+                  "x": 9.953758108519057,
+                  "y": 19.660251496261
+                }
+              },
+              "ball": {
+                "startTime": 0,
+                "endTime": 2.8062562593830775,
+                "startPose": {
+                  "x": 4.329738563085418,
+                  "y": 17.105158508577023,
+                  "rotation": 0
+                },
+                "endPose": {
+                  "x": 7.475868811027373,
+                  "y": 17.45414535828429,
+                  "rotation": 0
+                },
+                "controlOut": null,
+                "controlIn": null,
+                "passType": "direct",
+                "targetEntityId": "boat-attack-4",
+                "syncToEntityId": "boat-attack-4",
+                "syncArcDistance": null,
+                "throwDelay": 2.3504347880794816,
+                "travelDuration": 0.4558214713035962
+              }
+            },
+            "ballHolderId": "boat-attack-4"
+          },
+          {
+            "id": "663dc718-cb03-45b6-bae8-e888a0986c5c",
+            "name": "Stap 4",
+            "poses": {
+              "boat-defense-1": {
+                "x": 0.25,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-defense-2": {
+                "x": 3.75,
+                "y": 8.75,
+                "rotation": 0
+              },
+              "boat-defense-3": {
+                "x": 5.152093400171236,
+                "y": 12.836301507693477,
+                "rotation": 71.79469325391871
+              },
+              "boat-defense-4": {
+                "x": 4.479257624373749,
+                "y": 15.52848577686383,
+                "rotation": 79.42689824317993
+              },
+              "boat-defense-5": {
+                "x": 6.3980855775739895,
+                "y": 15.771530190052822,
+                "rotation": 118.33967986046275
+              },
+              "boat-attack-1": {
+                "x": 7.3013122215478665,
+                "y": 1.8,
+                "rotation": 126.96923734712237
+              },
+              "boat-attack-2": {
+                "x": 14.696856686479373,
+                "y": 2.6095652365587867,
+                "rotation": 148.8293825266079
+              },
+              "boat-attack-3": {
+                "x": 7.183060649337726,
+                "y": 13.203984081492205,
+                "rotation": 165.99421638620288
+              },
+              "boat-attack-4": {
+                "x": 7.475868811027373,
+                "y": 17.45414535828429,
+                "rotation": -138.32079474760903
+              },
+              "boat-attack-5": {
+                "x": 4.329738563085418,
+                "y": 17.105158508577023,
+                "rotation": -125.46731979346384
+              },
+              "ball": {
+                "x": 7.183060649337726,
+                "y": 13.203984081492205,
+                "rotation": 165.99421638620288
+              }
+            },
+            "routes": {
+              "boat-defense-3": {
+                "startTime": 0,
+                "endTime": 3.764415863218733,
+                "startPose": {
+                  "x": 4.161529619136046,
+                  "y": 11.502673189169274,
+                  "rotation": 0.5582559028204773
+                },
+                "endPose": {
+                  "x": 5.152093400171236,
+                  "y": 12.836301507693477,
+                  "rotation": 71.79469325391871
+                },
+                "controlOut": {
+                  "x": 4.71525629737482,
+                  "y": 11.50806854239952
+                },
+                "controlIn": {
+                  "x": 4.9790882915021974,
+                  "y": 12.310267690905773
+                }
+              },
+              "boat-attack-3": {
+                "startTime": 0,
+                "endTime": 3.764415863218733,
+                "startPose": {
+                  "x": 17.5,
+                  "y": 11.5,
+                  "rotation": 180
+                },
+                "endPose": {
+                  "x": 7.183060649337726,
+                  "y": 13.203984081492205,
+                  "rotation": 165.99421638620288
+                },
+                "controlOut": {
+                  "x": 14.01442975627895,
+                  "y": 11.5
+                },
+                "controlIn": {
+                  "x": 10.56500942438996,
+                  "y": 12.360406932183201
+                }
+              },
+              "ball": {
+                "startTime": 0,
+                "endTime": 2.890988052149152,
+                "startPose": {
+                  "x": 7.475868811027373,
+                  "y": 17.45414535828429,
+                  "rotation": 0
+                },
+                "endPose": {
+                  "x": 9.183567365869715,
+                  "y": 12.711576636918728,
+                  "rotation": 0
+                },
+                "controlOut": null,
+                "controlIn": null,
+                "passType": "route",
+                "targetEntityId": "boat-attack-3",
+                "syncToEntityId": "boat-attack-3",
+                "syncArcDistance": 8.424141795392096,
+                "throwDelay": 2.1651338806718567,
+                "travelDuration": 0.7258541714772954
+              }
+            },
+            "ballHolderId": "boat-attack-3"
+          },
+          {
+            "id": "a7ba5d83-bc34-4c4b-8f6c-d8fab7246e34",
+            "name": "Stap 5",
+            "poses": {
+              "boat-defense-1": {
+                "x": 0.25,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-defense-2": {
+                "x": 5.301612461459566,
+                "y": 10.736148501419382,
+                "rotation": 43.85394200921258
+              },
+              "boat-defense-3": {
+                "x": 5.152093400171236,
+                "y": 12.836301507693477,
+                "rotation": 71.79469325391871
+              },
+              "boat-defense-4": {
+                "x": 4.479257624373749,
+                "y": 15.52848577686383,
+                "rotation": 79.42689824317993
+              },
+              "boat-defense-5": {
+                "x": 6.3980855775739895,
+                "y": 15.771530190052822,
+                "rotation": 118.33967986046275
+              },
+              "boat-attack-1": {
+                "x": 7.3013122215478665,
+                "y": 1.8,
+                "rotation": 126.96923734712237
+              },
+              "boat-attack-2": {
+                "x": 6.778113191681831,
+                "y": 9.651796504114659,
+                "rotation": 153.24757449156954
+              },
+              "boat-attack-3": {
+                "x": 7.183060649337726,
+                "y": 13.203984081492205,
+                "rotation": 165.99421638620288
+              },
+              "boat-attack-4": {
+                "x": 7.475868811027373,
+                "y": 17.45414535828429,
+                "rotation": -138.32079474760903
+              },
+              "boat-attack-5": {
+                "x": 4.329738563085418,
+                "y": 17.105158508577023,
+                "rotation": -125.46731979346384
+              },
+              "ball": {
+                "x": 6.778113191681831,
+                "y": 9.651796504114659,
+                "rotation": 153.24757449156954
+              }
+            },
+            "routes": {
+              "boat-defense-2": {
+                "startTime": 0,
+                "endTime": 3.8149728388513258,
+                "startPose": {
+                  "x": 3.75,
+                  "y": 8.75,
+                  "rotation": 0
+                },
+                "endPose": {
+                  "x": 5.301612461459566,
+                  "y": 10.736148501419382,
+                  "rotation": 43.85394200921258
+                },
+                "controlOut": {
+                  "x": 4.318782208064927,
+                  "y": 8.75
+                },
+                "controlIn": {
+                  "x": 4.891458902110116,
+                  "y": 10.342083458610215
+                }
+              },
+              "boat-attack-2": {
+                "startTime": 0,
+                "endTime": 3.8149728388513258,
+                "startPose": {
+                  "x": 14.696856686479373,
+                  "y": 2.6095652365587867,
+                  "rotation": 148.8293825266079
+                },
+                "endPose": {
+                  "x": 6.778113191681831,
+                  "y": 9.651796504114659,
+                  "rotation": 153.24757449156954
+                },
+                "controlOut": {
+                  "x": 11.577034276844149,
+                  "y": 4.4968108019252
+                },
+                "controlIn": {
+                  "x": 10.034049650016465,
+                  "y": 8.01049657084693
+                }
+              },
+              "ball": {
+                "startTime": 0,
+                "endTime": 2.9314057388189396,
+                "startPose": {
+                  "x": 7.183060649337726,
+                  "y": 13.203984081492205,
+                  "rotation": 0
+                },
+                "endPose": {
+                  "x": 8.523444923106723,
+                  "y": 8.494386192394783,
+                  "rotation": 0
+                },
+                "controlOut": null,
+                "controlIn": null,
+                "passType": "route",
+                "targetEntityId": "boat-attack-2",
+                "syncToEntityId": "boat-attack-2",
+                "syncArcDistance": 8.555109369324208,
+                "throwDelay": 2.2262916522456857,
+                "travelDuration": 0.7051140865732539
+              }
+            },
+            "ballHolderId": "boat-attack-2"
+          },
+          {
+            "id": "3356ccf0-63d2-4974-8e0b-494c5a2facf5",
+            "name": "Stap 6",
+            "poses": {
+              "boat-defense-1": {
+                "x": 0.25,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-defense-2": {
+                "x": 5.301612461459566,
+                "y": 10.736148501419382,
+                "rotation": 43.85394200921258
+              },
+              "boat-defense-3": {
+                "x": 5.152093400171236,
+                "y": 12.836301507693477,
+                "rotation": 71.79469325391871
+              },
+              "boat-defense-4": {
+                "x": 4.479257624373749,
+                "y": 15.52848577686383,
+                "rotation": 79.42689824317993
+              },
+              "boat-defense-5": {
+                "x": 6.3980855775739895,
+                "y": 15.771530190052822,
+                "rotation": 118.33967986046275
+              },
+              "boat-attack-1": {
+                "x": 1.8190643256188674,
+                "y": 9.36512873471226,
+                "rotation": 125.4102357729222
+              },
+              "boat-attack-2": {
+                "x": 6.778113191681831,
+                "y": 9.651796504114659,
+                "rotation": 153.24757449156954
+              },
+              "boat-attack-3": {
+                "x": 7.183060649337726,
+                "y": 13.203984081492205,
+                "rotation": 165.99421638620288
+              },
+              "boat-attack-4": {
+                "x": 7.475868811027373,
+                "y": 17.45414535828429,
+                "rotation": -138.32079474760903
+              },
+              "boat-attack-5": {
+                "x": 4.329738563085418,
+                "y": 17.105158508577023,
+                "rotation": -125.46731979346384
+              },
+              "ball": {
+                "x": 1.8190643256188674,
+                "y": 9.36512873471226,
+                "rotation": 125.4102357729222
+              }
+            },
+            "routes": {
+              "boat-attack-1": {
+                "startTime": 0,
+                "endTime": 3.3633753037043372,
+                "startPose": {
+                  "x": 7.3013122215478665,
+                  "y": 1.8,
+                  "rotation": 126.96923734712237
+                },
+                "endPose": {
+                  "x": 1.8190643256188674,
+                  "y": 9.36512873471226,
+                  "rotation": 125.4102357729222
+                },
+                "controlOut": {
+                  "x": 5.428453614245663,
+                  "y": 4.288145683897359
+                },
+                "controlIn": {
+                  "x": 3.6235363030319165,
+                  "y": 6.826950413558672
+                }
+              },
+              "ball": {
+                "startTime": 0,
+                "endTime": 1.420251386830733,
+                "startPose": {
+                  "x": 6.778113191681831,
+                  "y": 9.651796504114659,
+                  "rotation": 0
+                },
+                "endPose": {
+                  "x": 5.023388903685817,
+                  "y": 4.887834230693426,
+                  "rotation": 0
+                },
+                "controlOut": null,
+                "controlIn": null,
+                "passType": "route",
+                "targetEntityId": "boat-attack-1",
+                "syncToEntityId": "boat-attack-1",
+                "syncArcDistance": 3.8371921255657213,
+                "throwDelay": 0.6891851577671796,
+                "travelDuration": 0.7310662290635533
+              }
+            },
+            "ballHolderId": null
+          },
+          {
+            "id": "90919bd9-49ae-4fd8-bf55-0c9d08c34635",
+            "name": "Stap 7",
+            "poses": {
+              "boat-defense-1": {
+                "x": 0.25,
+                "y": 11.5,
+                "rotation": 0
+              },
+              "boat-defense-2": {
+                "x": 5.301612461459566,
+                "y": 10.736148501419382,
+                "rotation": 43.85394200921258
+              },
+              "boat-defense-3": {
+                "x": 5.152093400171236,
+                "y": 12.836301507693477,
+                "rotation": 71.79469325391871
+              },
+              "boat-defense-4": {
+                "x": 4.479257624373749,
+                "y": 15.52848577686383,
+                "rotation": 79.42689824317993
+              },
+              "boat-defense-5": {
+                "x": 6.3980855775739895,
+                "y": 15.771530190052822,
+                "rotation": 118.33967986046275
+              },
+              "boat-attack-1": {
+                "x": 1.8190643256188674,
+                "y": 9.36512873471226,
+                "rotation": 125.4102357729222
+              },
+              "boat-attack-2": {
+                "x": 6.778113191681831,
+                "y": 9.651796504114659,
+                "rotation": 153.24757449156954
+              },
+              "boat-attack-3": {
+                "x": 7.183060649337726,
+                "y": 13.203984081492205,
+                "rotation": 165.99421638620288
+              },
+              "boat-attack-4": {
+                "x": 7.475868811027373,
+                "y": 17.45414535828429,
+                "rotation": -138.32079474760903
+              },
+              "boat-attack-5": {
+                "x": 4.329738563085418,
+                "y": 17.105158508577023,
+                "rotation": -125.46731979346384
+              },
+              "ball": {
+                "x": 0.0684453163679973,
+                "y": 11.191077787644929,
+                "rotation": 0
+              }
+            },
+            "routes": {
+              "ball": {
+                "startTime": 0,
+                "endTime": 0.3642590043330212,
+                "startPose": {
+                  "x": 1.8190643256188674,
+                  "y": 9.36512873471226,
+                  "rotation": 0
+                },
+                "endPose": {
+                  "x": 0.0684453163679973,
+                  "y": 11.191077787644929,
+                  "rotation": 0
+                },
+                "controlOut": null,
+                "controlIn": null,
+                "passType": "free",
+                "targetEntityId": null,
+                "syncToEntityId": null,
+                "syncArcDistance": null,
+                "throwDelay": 0,
+                "travelDuration": 0.3642590043330212
+              }
+            },
+            "ballHolderId": null
+          }
+        ],
+        "currentStepIndex": 7
+      }
+    }
+  }
+];
+})(typeof window !== 'undefined' ? window : this);
