@@ -321,7 +321,7 @@
                 "rotation": 148.8293825266079
               },
               "boat-attack-3": {
-                "x": 17.5,
+                "x": 16.5,
                 "y": 11.5,
                 "rotation": 180
               },
@@ -336,7 +336,7 @@
                 "rotation": -126.96923734712237
               },
               "ball": {
-                "x": 17.5,
+                "x": 16.5,
                 "y": 11.5,
                 "rotation": 180
               }
@@ -384,7 +384,7 @@
                 "rotation": 148.8293825266079
               },
               "boat-attack-3": {
-                "x": 17.5,
+                "x": 16.5,
                 "y": 11.5,
                 "rotation": 180
               },
@@ -407,9 +407,9 @@
             "routes": {
               "ball": {
                 "startTime": 0,
-                "endTime": 1.3423506889870749,
+                "endTime": 1.3062884110049158,
                 "startPose": {
-                  "x": 17.5,
+                  "x": 16.5,
                   "y": 11.5,
                   "rotation": 0
                 },
@@ -425,7 +425,7 @@
                 "syncToEntityId": null,
                 "syncArcDistance": null,
                 "throwDelay": 0,
-                "travelDuration": 1.3423506889870749
+                "travelDuration": 1.3062884110049158
               }
             },
             "ballHolderId": "boat-attack-4"
@@ -470,7 +470,7 @@
                 "rotation": 148.8293825266079
               },
               "boat-attack-3": {
-                "x": 17.5,
+                "x": 16.5,
                 "y": 11.5,
                 "rotation": 180
               },
@@ -600,7 +600,7 @@
                 "rotation": 148.8293825266079
               },
               "boat-attack-3": {
-                "x": 17.5,
+                "x": 16.5,
                 "y": 11.5,
                 "rotation": 180
               },
@@ -799,7 +799,7 @@
                 "startTime": 0,
                 "endTime": 3.764415863218733,
                 "startPose": {
-                  "x": 17.5,
+                  "x": 16.5,
                   "y": 11.5,
                   "rotation": 180
                 },

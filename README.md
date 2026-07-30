@@ -8,7 +8,7 @@ No installation and no server required:
 
 1. Open `index.html` directly in your browser.
 2. Drag boats and the ball on the field.
-3. Set ghost positions, then press **Next Step** to save a step.
+3. Set ghost positions, then press **Next Move** to save a step.
 4. Switch to **Play** to scrub and replay the tactic.
 5. Tactics are saved automatically in `localStorage`.
 
@@ -25,7 +25,7 @@ Flowboard lets you design canoe polo plays as a sequence of steps and play them 
 
 **Editing**
 
-- Drag boats to ghost targets, then confirm with **Next Step** to lock in a step
+- Drag boats to ghost targets, then confirm with **Next Move** to lock in a step
 - Rename, delete, and reorder steps; jump back to the start of a step
 - Undo / redo for editing mistakes
 
@@ -48,7 +48,7 @@ Flowboard lets you design canoe polo plays as a sequence of steps and play them 
 - Drag a boat to place a **ghost** at the destination. A route line shows the planned path.
 - Drag the ghost to fine-tune the finish, or drag the handle on the line to bend the path.
 - Clear a draft route with **X** / **Backspace** (with that boat selected), or turn in place with **T**.
-- Press **Next Step** to animate all draft routes and save them as the next step.
+- Press **Next Move** to animate all draft routes and save them as the next move.
 - In start-position mode, drag to move and click a boat to rotate, then **Lock in**.
 
 ### Possession

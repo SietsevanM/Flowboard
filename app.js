@@ -156,9 +156,10 @@
       }
       return angles.map(function (angleDeg) {
         var angleRad = (angleDeg * Math.PI) / 180;
+        var radius = Math.abs(angleDeg) < 0.001 ? fanRadius - 1 : fanRadius;
         var pose = clampPoseToField({
-          x: fanCenterX + fanRadius * Math.cos(angleRad),
-          y: fanCenterY + fanRadius * Math.sin(angleRad),
+          x: fanCenterX + radius * Math.cos(angleRad),
+          y: fanCenterY + radius * Math.sin(angleRad),
           rotation: 0,
         });
         pose.y = clamp(pose.y, fieldMargin, FIELD_WIDTH - fieldMargin);
@@ -173,7 +174,7 @@
     }
     var ys = spacedYs(boatCount, 3.5);
     return ys.map(function (y) {
-      return { role: 'attacker', x: HALF_LENGTH, y: y, rotation: 180 };
+      return { role: 'attacker', x: HALF_LENGTH - 1, y: y, rotation: 180 };
     });
   }
 
@@ -4033,22 +4034,98 @@
     }
   }
 
-  function drawBall(pose, selected) {
-    var radius = (BALL_DIAMETER * fieldScale) / 2;
+  function drawBallPanelBand(x, y, radius, y0, y1, bulge0, bulge1, color) {
+    var span0 = Math.sqrt(Math.max(0, 1 - y0 * y0)) * radius;
+    var span1 = Math.sqrt(Math.max(0, 1 - y1 * y1)) * radius;
+    var top = y + y0 * radius;
+    var bottom = y + y1 * radius;
     ctx.beginPath();
-    ctx.arc(pose.x, pose.y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = '#f8fafc';
+    ctx.moveTo(x - span0, top);
+    ctx.quadraticCurveTo(x, top + bulge0 * radius, x + span0, top);
+    ctx.lineTo(x + span1, bottom);
+    ctx.quadraticCurveTo(x, bottom + bulge1 * radius, x - span1, bottom);
+    ctx.closePath();
+    ctx.fillStyle = color;
     ctx.fill();
-    ctx.strokeStyle = selected ? '#38bdf8' : '#0f172a';
-    ctx.lineWidth = selected ? Math.max(2.5, fieldScale * 0.08) : Math.max(1.5, fieldScale * 0.05);
+  }
+
+  function drawBallSeamCurve(x, y, radius, yNorm, bulge) {
+    var yy = y + yNorm * radius;
+    var span = Math.sqrt(Math.max(0, 1 - yNorm * yNorm)) * radius;
+    ctx.beginPath();
+    ctx.moveTo(x - span, yy);
+    ctx.quadraticCurveTo(x, yy + bulge * radius, x + span, yy);
+    ctx.stroke();
+  }
+
+  function drawBallFace(x, y, radius, selected) {
+    var yellow = '#f0b429';
+    var blue = '#1a3055';
+    var seam = '#0b1220';
+    var seams = [
+      { y: -0.62, bulge: -0.06 },
+      { y: -0.18, bulge: -0.02 },
+      { y: 0.18, bulge: 0.02 },
+      { y: 0.62, bulge: 0.06 },
+    ];
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.clip();
+
+    // Geel als basis (polen + middenband); blauwe panelen ertussen.
+    ctx.fillStyle = yellow;
+    ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    drawBallPanelBand(x, y, radius, seams[0].y, seams[1].y, seams[0].bulge, seams[1].bulge, blue);
+    drawBallPanelBand(x, y, radius, seams[2].y, seams[3].y, seams[2].bulge, seams[3].bulge, blue);
+
+    if (radius >= 7) {
+      ctx.strokeStyle = seam;
+      ctx.lineWidth = Math.max(1.5, radius * 0.14);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      seams.forEach(function (s) {
+        drawBallSeamCurve(x, y, radius, s.y, s.bulge);
+      });
+      // Verticale naden op polen en blauwe panelen.
+      ctx.lineWidth = Math.max(1.25, radius * 0.11);
+      [
+        [-0.55, -1, -0.62], [0, -1, -0.62], [0.55, -1, -0.62],
+        [-0.72, -0.62, -0.18], [0.72, -0.62, -0.18],
+        [-0.72, 0.18, 0.62], [0.72, 0.18, 0.62],
+        [-0.55, 0.62, 1], [0, 0.62, 1], [0.55, 0.62, 1],
+      ].forEach(function (seg) {
+        var x0 = x + seg[0] * radius;
+        var y0 = y + seg[1] * radius;
+        var y1 = y + seg[2] * radius;
+        var midY = (y0 + y1) / 2;
+        var bulge = Math.abs(seg[0]) > 0.6 ? -Math.sign(seg[0]) * radius * 0.06 : 0;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.quadraticCurveTo(x0 + bulge, midY, x0, y1);
+        ctx.stroke();
+      });
+    }
+
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = selected ? '#38bdf8' : seam;
+    ctx.lineWidth = selected ? Math.max(2.5, radius * 0.22) : Math.max(1.5, radius * 0.14);
     ctx.stroke();
     if (selected) {
       ctx.beginPath();
-      ctx.arc(pose.x, pose.y, radius + Math.max(3, fieldScale * 0.1), 0, Math.PI * 2);
+      ctx.arc(x, y, radius + Math.max(3, radius * 0.28), 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
-      ctx.lineWidth = Math.max(1.5, fieldScale * 0.05);
+      ctx.lineWidth = Math.max(1.5, radius * 0.14);
       ctx.stroke();
     }
+  }
+
+  function drawBall(pose, selected) {
+    drawBallFace(pose.x, pose.y, (BALL_DIAMETER * fieldScale) / 2, !!selected);
   }
 
   function pathLineWidth() {
@@ -4084,13 +4161,8 @@
     var canvasPose = metersToCanvas(pose);
     var radius = Math.max(4, fieldScale * 0.12);
     ctx.save();
-    ctx.beginPath();
-    ctx.arc(canvasPose.x, canvasPose.y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(248, 250, 252, 0.85)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(15, 23, 42, 0.7)';
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
+    ctx.globalAlpha = 0.9;
+    drawBallFace(canvasPose.x, canvasPose.y, radius, false);
     ctx.restore();
   }
 
@@ -4109,15 +4181,7 @@
     var canvasPose = metersToCanvas(pose);
     var radius = Math.max(5, fieldScale * 0.14);
     var offset = Math.max(8, fieldScale * 0.22);
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(canvasPose.x + offset, canvasPose.y - offset, radius, 0, Math.PI * 2);
-    ctx.fillStyle = '#f8fafc';
-    ctx.fill();
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.restore();
+    drawBallFace(canvasPose.x + offset, canvasPose.y - offset, radius, false);
   }
 
   function drawPassTargetHighlights() {
@@ -4146,14 +4210,32 @@
 
   function drawControlHandle(point, active) {
     var canvasPoint = metersToCanvas({ x: point.x, y: point.y, rotation: 0 });
-    var radius = Math.max(7, fieldScale * 0.22);
+    var size = Math.max(8, fieldScale * 0.24);
+    var x = canvasPoint.x;
+    var y = canvasPoint.y;
     ctx.save();
+    // Ruitvorm: duidelijk een handle, niet te verwarren met de bal.
     ctx.beginPath();
-    ctx.arc(canvasPoint.x, canvasPoint.y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = active ? '#f8fafc' : '#cbd5e1';
+    ctx.moveTo(x, y - size);
+    ctx.lineTo(x + size, y);
+    ctx.lineTo(x, y + size);
+    ctx.lineTo(x - size, y);
+    ctx.closePath();
+    ctx.fillStyle = active ? '#e0f2fe' : '#94a3b8';
     ctx.fill();
-    ctx.strokeStyle = active ? '#0f172a' : 'rgba(15, 23, 42, 0.55)';
-    ctx.lineWidth = active ? 2 : 1.5;
+    ctx.strokeStyle = active ? '#0ea5e9' : '#334155';
+    ctx.lineWidth = active ? 2.25 : 1.75;
+    ctx.stroke();
+    // Kleine grip-kruis om “sleepbaar” te signaleren.
+    var grip = size * 0.35;
+    ctx.beginPath();
+    ctx.moveTo(x - grip, y);
+    ctx.lineTo(x + grip, y);
+    ctx.moveTo(x, y - grip);
+    ctx.lineTo(x, y + grip);
+    ctx.strokeStyle = active ? 'rgba(14, 165, 233, 0.9)' : 'rgba(15, 23, 42, 0.45)';
+    ctx.lineWidth = 1.25;
+    ctx.lineCap = 'round';
     ctx.stroke();
     ctx.restore();
   }
