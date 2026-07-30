@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Flowboard</title>
+  <script>
+    window.__FLOWBOARD_CACHE_BUST = Date.now();
+    var css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = 'style.css?v=' + window.__FLOWBOARD_CACHE_BUST;
+    document.head.appendChild(css);
+  </script>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>Flowboard</h1>
+      <div class="header-actions">
+        <button type="button" class="btn" id="btn-playback-mode" disabled title="Speel opgeslagen stappen af">
+          Afspelen
+        </button>
+        <button type="button" class="btn" id="btn-settings">Settings</button>
+      </div>
+    </header>
+
+    <div class="field-stage">
+      <div class="canvas-wrap">
+        <canvas id="field-canvas" width="800" height="600"></canvas>
+        <div id="boat-action-menu" class="boat-action-menu hidden" role="menu" aria-label="Bootacties">
+          <button type="button" class="btn btn-menu" data-action="vaar" role="menuitem">Vaar</button>
+          <button type="button" class="btn btn-menu" data-action="draai" role="menuitem">Draai</button>
+        </div>
+      </div>
+      <aside id="steps-panel" class="steps-panel is-peek" aria-label="Stappen en veldacties">
+        <button
+          type="button"
+          class="sheet-handle"
+          id="btn-steps-toggle"
+          aria-expanded="false"
+          aria-controls="steps-panel"
+          title="Stappenpaneel openen of sluiten"
+        >
+          <span class="sheet-handle-bar" aria-hidden="true"></span>
+          <span class="sheet-handle-label">Stappen</span>
+        </button>
+        <div class="toolbar-row sheet-toolbar">
+          <button type="button" class="btn btn-icon" id="btn-undo" title="Ongedaan maken" aria-label="Ongedaan maken" disabled>
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M12.5 8c-2.65 0-5.05 1-6.9 2.6L2 7v9h9l-3.62-3.62A7.96 7.96 0 0 1 12.5 10c3.53 0 6.52 2.29 7.6 5.5l2.37-.78C20.98 10.77 17.08 8 12.5 8z"/>
+            </svg>
+          </button>
+          <button type="button" class="btn btn-icon" id="btn-redo" title="Opnieuw" aria-label="Opnieuw" disabled>
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M18.4 10.6A7.96 7.96 0 0 0 11.5 8C6.92 8 3.02 10.77 1.53 14.72l2.37.78A6.01 6.01 0 0 1 11.5 10c1.89 0 3.63.69 4.99 1.82L12.9 16H22V7l-3.6 3.6z"/>
+            </svg>
+          </button>
+        </div>
+        <p id="sheet-peek-summary" class="sheet-peek-summary" aria-live="polite">Stap 1</p>
+        <button type="button" class="btn btn-primary btn-go" id="btn-go" disabled>
+          Go
+        </button>
+        <div id="start-actions" class="start-actions sheet-expand-only hidden">
+          <button type="button" class="btn btn-toolbar" id="btn-set-start" title="Modus om startposities vrij te zetten">
+            <span class="btn-toolbar-label">Zet startpositie</span>
+            <span id="start-indicator" class="start-indicator" title="Geen startpositie gezet" aria-hidden="true"></span>
+          </button>
+        </div>
+        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-goto-start" title="Alle boten terugzetten naar het begin van de huidige stap" disabled>
+          Terug naar startpositie
+        </button>
+        <h2 class="steps-panel-title sheet-expand-only">Stappen</h2>
+        <ol id="steps-list" class="steps-list sheet-expand-only"></ol>
+        <p id="steps-hint" class="steps-hint muted sheet-expand-only">Sleep boten om ghosts te zetten, daarna Go.</p>
+        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-reset-all">
+          Reset
+        </button>
+      </aside>
+      <div id="transport-bar" class="transport-bar hidden" aria-label="Afspeelbalk">
+        <button type="button" class="btn btn-icon" id="btn-transport-play" title="Afspelen" aria-label="Afspelen" disabled>
+          <svg id="transport-icon-play" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+            <path fill="currentColor" d="M8 5v14l11-7z"/>
+          </svg>
+          <svg id="transport-icon-pause" class="hidden" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+            <path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/>
+          </svg>
+        </button>
+        <div class="transport-scrub">
+          <input type="range" id="transport-scrubber" min="0" max="1000" value="0" step="1" disabled aria-label="Voortgang" />
+        </div>
+        <span id="transport-time" class="transport-time">0:00 / 0:00</span>
+        <div class="transport-speed" aria-label="Afspeelsnelheid">
+          <button type="button" class="btn btn-icon btn-speed" id="btn-speed-down" title="Langzamer" aria-label="Langzamer" disabled>−</button>
+          <span id="transport-speed-label" class="transport-speed-label">1×</span>
+          <button type="button" class="btn btn-icon btn-speed" id="btn-speed-up" title="Sneller" aria-label="Sneller" disabled>+</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="message" class="message hidden" role="status" aria-live="polite"></div>
+
+  <div id="settings-backdrop" class="settings-backdrop hidden">
+    <div class="settings-panel panel" role="dialog" aria-labelledby="settings-title">
+      <div class="settings-head">
+        <h2 id="settings-title">Settings</h2>
+        <button type="button" class="btn" id="btn-close-settings">Sluiten</button>
+      </div>
+      <div id="settings-body" class="settings-body"></div>
+    </div>
+  </div>
+
+  <script>
+    var js = document.createElement('script');
+    js.src = 'app.js?v=' + window.__FLOWBOARD_CACHE_BUST;
+    document.body.appendChild(js);
+  </script>
+</body>
+</html>
