@@ -1,14 +1,55 @@
 (function () {
   'use strict';
 
+  var t = function (key, params) { return FlowboardI18n.t(key, params); };
+
   var STORAGE_KEY = 'flowboard:tactic';
   var FIELD_LENGTH = 35;
   var FIELD_WIDTH = 23;
   var HALF_LENGTH = 17.5;
   var BOAT_LENGTH = 3;
   var BOAT_WIDTH = 0.6;
+  // Kayak outline in metres (geometric centre at origin, bow at +x), traced from Keistad playbook.
+  var BOAT_HULL = [
+    [1.498, 0.000],
+    [1.415, 0.113],
+    [-0.369, 0.299],
+    [-1.498, 0.122],
+    [-1.498, -0.122],
+    [-0.369, -0.299],
+    [1.415, -0.113]
+  ];
+  var BOAT_COCKPIT = [
+    [0.373, 0.000],
+    [0.326, 0.142],
+    [-0.211, 0.209],
+    [-0.359, 0.108],
+    [-0.359, -0.108],
+    [-0.211, -0.209],
+    [0.326, -0.142]
+  ];
+  var BOAT_HULL_CORNER_RADIUS = 0.1;
+  var BOAT_COCKPIT_CORNER_RADIUS = 0.045;
+  // Two-colour split: just before the hull's widest point (toward the bow).
+  var BOAT_COLOR_SPLIT_X = (function () {
+    var widestHalfWidth = 0;
+    var widestX = 0;
+    BOAT_HULL.forEach(function (point) {
+      var halfWidth = Math.abs(point[1]);
+      if (halfWidth > widestHalfWidth) {
+        widestHalfWidth = halfWidth;
+        widestX = point[0];
+      }
+    });
+    return widestX + 0.04;
+  })();
   var BALL_DIAMETER = 0.7;
+  var BALL_CLAIM_SNAP_RADIUS = 1;
+  var DRIBBLE_AHEAD_SECONDS = 2;
+  var ARC_SAMPLES = 48;
   var GOAL_WIDTH = 1.5;
+  var CONFETTI_COLORS = ['#facc15', '#ef4444', '#3b82f6', '#22c55e', '#f97316', '#ec4899', '#a855f7'];
+  var CONFETTI_COUNT = 48;
   var LINE_4M = 4;
   var LINE_6M = 6;
   var CANVAS_PADDING = 28;
@@ -44,6 +85,7 @@
       showDefense: true,
       motionUnits: 'kmh',
       motionTimingMode: 'boatSpeed',
+      boatSpeedSyncArrival: true,
       stepDuration: 2,
       boatSpeed: 10,
       boatAcceleration: 7.2,
@@ -95,6 +137,39 @@
   }
 
   function attackSlots(formation, boatCount) {
+    if (formation === 'fan') {
+      var fanCenterX = 2;
+      var fanCenterY = FIELD_WIDTH / 2;
+      var goalX = 0;
+      var fanRadius = HALF_LENGTH - fanCenterX;
+      var fanArcSpan = 140;
+      var fanHalfArc = fanArcSpan / 2;
+      var fieldMargin = BOAT_LENGTH / 2 + 0.3;
+      var angles = [];
+      if (boatCount <= 1) {
+        angles = [0];
+      } else {
+        for (var i = 0; i < boatCount; i++) {
+          angles.push(-fanHalfArc + (fanArcSpan * i) / (boatCount - 1));
+        }
+      }
+      return angles.map(function (angleDeg) {
+        var angleRad = (angleDeg * Math.PI) / 180;
+        var pose = clampPoseToField({
+          x: fanCenterX + fanRadius * Math.cos(angleRad),
+          y: fanCenterY + fanRadius * Math.sin(angleRad),
+          rotation: 0,
+        });
+        pose.y = clamp(pose.y, fieldMargin, FIELD_WIDTH - fieldMargin);
+        pose.rotation = rotationFromTangent(goalX - pose.x, fanCenterY - pose.y, 180);
+        return {
+          role: 'attacker',
+          x: pose.x,
+          y: pose.y,
+          rotation: pose.rotation,
+        };
+      });
+    }
     var ys = spacedYs(boatCount, 3.5);
     return ys.map(function (y) {
       return { role: 'attacker', x: HALF_LENGTH, y: y, rotation: 180 };
@@ -167,7 +242,7 @@
       id: 'ball',
       type: 'ball',
       team: 'neutral',
-      label: 'Bal',
+      label: t('entity.ball'),
       color: '#ffffff',
       colors: ['#ffffff'],
       initial: { x: HALF_LENGTH, y: FIELD_WIDTH / 2, rotation: 0 },
@@ -184,21 +259,64 @@
     return poses;
   }
 
-  function createStep(name, poses, routes) {
+  function defaultStartBallHolderId(settings) {
+    if (!settings || settings.showAttack === false) return null;
+    var boatCount = settings.attack && settings.attack.boatCount;
+    if (!boatCount || boatCount < 3) return null;
+    return 'boat-attack-3';
+  }
+
+  function createStartStep(entities, settings) {
+    var poses = captureEntityPoses(entities);
+    var holderId = defaultStartBallHolderId(settings);
+    if (holderId && poses[holderId]) {
+      poses.ball = clone(poses[holderId]);
+    }
+    return createStep(t('step.start'), poses, null, holderId);
+  }
+
+  function createStep(name, poses, routes, ballHolderId) {
     return {
       id: uuid(),
       name: name,
       poses: poses || {},
       routes: routes || null,
+      ballHolderId: ballHolderId == null ? null : ballHolderId,
     };
   }
 
   function stepNameForIndex(index) {
-    return index === 0 ? 'Start' : 'Stap ' + index;
+    return index === 0 ? t('step.start') : t('step.number', { n: index });
   }
 
-  function legacyStepNameForIndex(index) {
-    return index === 0 ? 'Start' : 'Stap ' + (index + 1);
+  function defaultStepNameForLocale(index, locale) {
+    return index === 0
+      ? FlowboardI18n.tForLocale(locale, 'step.start')
+      : FlowboardI18n.tForLocale(locale, 'step.number', { n: index });
+  }
+
+  function legacyDefaultStepNameForLocale(index, locale) {
+    return index === 0
+      ? FlowboardI18n.tForLocale(locale, 'step.start')
+      : FlowboardI18n.tForLocale(locale, 'step.number', { n: index + 1 });
+  }
+
+  function isDefaultStepName(name, index) {
+    if (!name) return true;
+    return FlowboardI18n.supportedLocales.some(function (locale) {
+      return name === defaultStepNameForLocale(index, locale) ||
+        name === legacyDefaultStepNameForLocale(index, locale);
+    });
+  }
+
+  function syncDefaultStepNames() {
+    if (!state.tactic || !Array.isArray(state.tactic.steps)) return;
+    state.tactic.steps.forEach(function (step, index) {
+      if (!step || typeof step !== 'object') return;
+      if (isDefaultStepName(step.name, index)) {
+        step.name = stepNameForIndex(index);
+      }
+    });
   }
 
   function ensureSteps(tactic) {
@@ -207,15 +325,23 @@
       if ((!poses || !Object.keys(poses).length) && tactic.startPositions) {
         poses = clone(tactic.startPositions);
       }
-      tactic.steps = [createStep('Start', poses)];
+      tactic.steps = [createStartStep(tactic.entities, tactic.settings)];
     } else {
       tactic.steps.forEach(function (step, index) {
         if (!step || typeof step !== 'object') return;
         if (!step.id) step.id = uuid();
-        if (!step.name || step.name === legacyStepNameForIndex(index)) {
+        if (isDefaultStepName(step.name, index)) {
           step.name = stepNameForIndex(index);
         }
         if (!step.poses || typeof step.poses !== 'object') step.poses = {};
+        if (step.ballHolderId === undefined) {
+          step.ballHolderId = index === 0
+            ? defaultStartBallHolderId(tactic.settings)
+            : null;
+        }
+        if (index === 0 && step.ballHolderId && step.poses && step.poses[step.ballHolderId]) {
+          step.poses.ball = clone(step.poses[step.ballHolderId]);
+        }
         if (index === 0) step.routes = null;
         else if (step.routes && typeof step.routes !== 'object') step.routes = null;
       });
@@ -314,7 +440,7 @@
     var entities = buildEntities(settings);
     var tactic = {
       id: uuid(),
-      name: 'Nieuwe kanopolo-tactiek',
+      name: t('tactic.defaultName'),
       sport: 'canoe-polo',
       field: {
         sport: 'canoe-polo',
@@ -329,7 +455,7 @@
       }),
       interactions: [],
       startPositions: null,
-      steps: [createStep('Start', captureEntityPoses(entities))],
+      steps: [createStartStep(entities, settings)],
       currentStepIndex: 0,
       duration: 12,
       createdAt: new Date().toISOString(),
@@ -362,7 +488,7 @@
     settings.showLine6m = settings.showLine6m !== false;
     settings.showNumbers = !!settings.showNumbers;
     settings.defenseFormation = settings.defenseFormation === '1-2-2' ? '1-2-2' : '1-3-1';
-    settings.attackFormation = 'midline';
+    settings.attackFormation = settings.attackFormation === 'fan' ? 'fan' : 'midline';
     var rawSettings = tactic.settings || {};
     if (rawSettings.motionUnits !== 'kmh') {
       if (rawSettings.boatSpeed != null) settings.boatSpeed = Number(rawSettings.boatSpeed) * KMH_PER_MS;
@@ -373,6 +499,7 @@
     }
     settings.motionUnits = 'kmh';
     settings.motionTimingMode = settings.motionTimingMode === 'stepDuration' ? 'stepDuration' : 'boatSpeed';
+    settings.boatSpeedSyncArrival = rawSettings.boatSpeedSyncArrival !== false;
     settings.stepDuration = clamp(Number(settings.stepDuration) || 2, 0.25, 30);
     settings.boatSpeed = clamp(Number(settings.boatSpeed) || 10, 1, 40);
     settings.boatAcceleration = clamp(Number(settings.boatAcceleration) || 7.2, 1, 72);
@@ -404,7 +531,7 @@
       rebuilt.tracks = rebuilt.entities.map(function (entity) {
         return { entityId: entity.id, segments: [] };
       });
-      rebuilt.steps = [createStep('Start', captureEntityPoses(rebuilt.entities))];
+      rebuilt.steps = [createStartStep(rebuilt.entities, settings)];
       rebuilt.currentStepIndex = 0;
       rebuilt.createdAt = tactic.createdAt || rebuilt.createdAt;
       rebuilt.updatedAt = new Date().toISOString();
@@ -448,7 +575,7 @@
       return { entityId: entity.id, segments: [] };
     });
     tactic.interactions = [];
-    tactic.steps = [createStep('Start', captureEntityPoses(entities))];
+    tactic.steps = [createStartStep(entities, settings)];
     tactic.currentStepIndex = 0;
     tactic.updatedAt = new Date().toISOString();
     if (state) {
@@ -492,6 +619,12 @@
     startPoseEdit: false,
     settingsOpen: false,
     stepRename: null,
+    ballWasInGoal: false,
+    confetti: {
+      particles: [],
+      raf: null,
+      lastUpdateAt: null,
+    },
   };
 
   var DRAG_THRESHOLD_PX = 8;
@@ -583,11 +716,420 @@
     canvas.classList.remove('dragging');
   }
 
-  function getEntityActions(entity) {
+  function getEntityActions(entity, options) {
     if (!entity) return [];
-    if (entity.type === 'ball') return ['vaar'];
-    if (entity.type === 'boat') return ['vaar', 'draai'];
-    return [];
+    if (options && options.atGhost) {
+      return getPrimarySegment(entity.id) ? ['cancel'] : [];
+    }
+    var actions = [];
+    if (entity.type === 'ball') actions = ['pass', 'vaarlijn', 'vaar'];
+    else if (entity.type === 'boat') actions = ['vaar', 'draai'];
+    if (getPrimarySegment(entity.id)) actions.push('cancel');
+    return actions;
+  }
+
+  function clearEntityRoute(entityId) {
+    if (!canEdit()) return;
+    if (!getPrimarySegment(entityId)) return;
+    recordHistory();
+    getTrackForEntity(entityId).segments = [];
+    recomputeAllSegmentDurations();
+    state.tactic.updatedAt = new Date().toISOString();
+    closeActionMenu();
+    clearPointerInteraction();
+    renderAll();
+  }
+
+  function getCurrentStep() {
+    ensureSteps(state.tactic);
+    return state.tactic.steps[state.tactic.currentStepIndex];
+  }
+
+  function getBallHolderId(step) {
+    step = step || getCurrentStep();
+    return (step && step.ballHolderId) || null;
+  }
+
+  function setBallHolderId(holderId) {
+    var step = getCurrentStep();
+    if (!step) return;
+    step.ballHolderId = holderId || null;
+  }
+
+  function isPoseNearBall(ballPose, boatPose) {
+    return distanceMeters(ballPose, boatPose) <= BALL_CLAIM_SNAP_RADIUS;
+  }
+
+  function snapEndPoseToBall(endPose) {
+    if (hasBallRoute()) return endPose;
+    var ballPose = getBallStartPose();
+    if (!isPoseNearBall(ballPose, endPose)) return endPose;
+    return {
+      x: ballPose.x,
+      y: ballPose.y,
+      rotation: endPose.rotation,
+    };
+  }
+
+  function getClaimArcDistanceOnRoute(segment, ballPose) {
+    var arcData = getSegmentArcData(segment);
+    var samples = 56;
+    for (var i = 0; i <= samples; i++) {
+      var t = i / samples;
+      var pose = poseAlongSegment(segment, t, null);
+      if (distanceMeters(pose, ballPose) <= BALL_CLAIM_SNAP_RADIUS) {
+        return arcDistanceAtProgress(arcData, t);
+      }
+    }
+    var bestDist = Infinity;
+    var bestArc = arcData.total;
+    for (var j = 0; j <= samples; j++) {
+      var t2 = j / samples;
+      var pose2 = poseAlongSegment(segment, t2, null);
+      var dist = distanceMeters(pose2, ballPose);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestArc = arcDistanceAtProgress(arcData, t2);
+      }
+    }
+    return bestArc;
+  }
+
+  function getBallClaimAtTime(routes, localTime, motionOptsByEntity) {
+    if (!routes) return null;
+    var claim = null;
+    Object.keys(routes).forEach(function (entityId) {
+      if (entityId === 'ball') return;
+      var seg = routes[entityId];
+      if (!seg || !seg.claimsBall) return;
+      var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+      if (!entity) return;
+      var claimArc = seg.claimArcDistance != null ? seg.claimArcDistance : 0;
+      var motionOpts = motionOptsByEntity && motionOptsByEntity[entityId];
+      var claimTime = localTimeAtArcDistance(seg, claimArc, entity, motionOpts, seg.endTime);
+      if (localTime >= claimTime - 1e-6) {
+        claim = { entityId: entityId, segment: seg, claimArc: claimArc, entity: entity };
+      }
+    });
+    return claim;
+  }
+
+  function resolveBallClaimHolder(routes) {
+    if (!routes) return null;
+    var holderId = null;
+    Object.keys(routes).forEach(function (entityId) {
+      if (entityId === 'ball') return;
+      var seg = routes[entityId];
+      if (!seg || !seg.claimsBall) return;
+      var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+      if (!entity) return;
+      var claimArc = seg.claimArcDistance != null ? seg.claimArcDistance : 0;
+      var claimTime = localTimeAtArcDistance(seg, claimArc, entity, null, seg.endTime);
+      if (seg.endTime >= claimTime - 1e-6) {
+        holderId = entityId;
+      }
+    });
+    return holderId;
+  }
+
+  function updateBallClaimOnRoute(entityId, boatPose) {
+    if (!canEdit() || hasBallRoute()) return false;
+    var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+    if (!entity || entity.type !== 'boat') return false;
+    var segment = getPrimarySegment(entityId);
+    if (!segment) return false;
+    if (getBallHolderId() === entityId) {
+      delete segment.claimsBall;
+      delete segment.claimArcDistance;
+      delete segment.claimBallPose;
+      return false;
+    }
+    var pose = boatPose || getBoatTargetPose(entityId);
+    var ballPose = getBallStartPose();
+    if (!isPoseNearBall(ballPose, pose)) {
+      delete segment.claimsBall;
+      delete segment.claimArcDistance;
+      delete segment.claimBallPose;
+      return false;
+    }
+
+    segment.claimsBall = true;
+    segment.claimArcDistance = getClaimArcDistanceOnRoute(segment, ballPose);
+    segment.claimBallPose = clone(ballPose);
+    state.tactic.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  function claimBallPossessionImmediate(entityId, boatPose) {
+    if (!canEdit() || hasBallRoute()) return false;
+    var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+    if (!entity || entity.type !== 'boat') return false;
+
+    var pose = boatPose || getBoatTargetPose(entityId);
+    var ballPose = getBallStartPose();
+    if (!isPoseNearBall(ballPose, pose)) return false;
+    if (getBallHolderId() === entityId) return false;
+
+    setBallHolderId(entityId);
+    var step = getCurrentStep();
+    if (step && step.poses) {
+      step.poses.ball = clone(pose);
+    }
+    state.tactic.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  function getBallEntity() {
+    return state.tactic.entities.find(function (item) { return item.type === 'ball'; });
+  }
+
+  function hasBallRoute() {
+    return !!getPrimarySegment('ball');
+  }
+
+  function isDribbleActive(ballHolderId, routes) {
+    ballHolderId = ballHolderId == null ? getBallHolderId() : ballHolderId;
+    if (!ballHolderId) return false;
+    if (routes) {
+      if (routes.ball) return false;
+      return !!routes[ballHolderId];
+    }
+    if (hasBallRoute()) return false;
+    return !!getPrimarySegment(ballHolderId);
+  }
+
+  function getBallStartPose() {
+    var holderId = getBallHolderId();
+    var poses = getPosesAtTime();
+    if (holderId && poses[holderId] && !hasBallRoute()) {
+      return clone(poses[holderId]);
+    }
+    var ball = getBallEntity();
+    return clone(poses.ball || (ball && ball.initial) || { x: HALF_LENGTH, y: FIELD_WIDTH / 2, rotation: 0 });
+  }
+
+  function getBoatTargetPose(boatId) {
+    var segment = getPrimarySegment(boatId);
+    if (segment) return clone(segment.endPose);
+    var poses = getPosesAtTime();
+    var entity = state.tactic.entities.find(function (item) { return item.id === boatId; });
+    return clone(poses[boatId] || (entity && entity.initial) || { x: 0, y: 0, rotation: 0 });
+  }
+
+  function getHolderTeam(holderId) {
+    if (!holderId) return null;
+    var entity = state.tactic.entities.find(function (item) { return item.id === holderId; });
+    return entity ? entity.team : null;
+  }
+
+  function hitTestBallHolderIndicator(holderPose, x, y) {
+    var canvasPose = metersToCanvas(holderPose);
+    var offset = Math.max(8, fieldScale * 0.22);
+    var radius = Math.max(8, fieldScale * 0.18);
+    var ix = canvasPose.x + offset;
+    var iy = canvasPose.y - offset;
+    return Math.hypot(x - ix, y - iy) <= radius;
+  }
+
+  function getBallPickAtCanvasPoint(x, y) {
+    if (hasBallRoute()) return null;
+    var holderId = getBallHolderId();
+    var startPose = getBallStartPose();
+    var ball = getBallEntity();
+    if (!ball) return null;
+
+    var ballHit = Math.max(MIN_ENTITY_HIT_PX + 6, (BALL_DIAMETER * fieldScale) / 2 + 10);
+    var canvasPose = metersToCanvas(startPose);
+    if (Math.hypot(x - canvasPose.x, y - canvasPose.y) <= ballHit) {
+      return { startPose: clone(startPose), holderId: holderId };
+    }
+
+    if (holderId) {
+      var holder = state.tactic.entities.find(function (item) { return item.id === holderId; });
+      if (holder) {
+        var poses = getPosesAtTime();
+        var holderPose = poses[holderId] || holder.initial;
+        if (hitTestBallHolderIndicator(holderPose, x, y)) {
+          return { startPose: clone(startPose), holderId: holderId };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function hitTestBoatPassTarget(entity, pose, x, y, slopPx) {
+    var canvasPose = metersToCanvas(pose);
+    slopPx = slopPx || 0;
+    var halfLength = Math.max(MIN_ENTITY_HIT_PX, (BOAT_LENGTH * fieldScale) / 2 + 4 + slopPx);
+    var halfWidth = Math.max(MIN_ENTITY_HIT_PX * 0.55, (BOAT_WIDTH * fieldScale) / 2 + 4 + slopPx * 0.55);
+    var dx = x - canvasPose.x;
+    var dy = y - canvasPose.y;
+    var rad = (-canvasPose.rotation * Math.PI) / 180;
+    var localX = dx * Math.cos(rad) - dy * Math.sin(rad);
+    var localY = dx * Math.sin(rad) + dy * Math.cos(rad);
+    return Math.abs(localX) <= halfLength && Math.abs(localY) <= halfWidth;
+  }
+
+  function resolveBallPasserId(startPose, explicitHolderId) {
+    if (explicitHolderId) return explicitHolderId;
+    var holderId = getBallHolderId();
+    if (holderId) return holderId;
+    if (!startPose) return null;
+    var bestId = null;
+    var bestDist = 1.6;
+    var poses = getPosesAtTime();
+    state.tactic.entities.forEach(function (entity) {
+      if (entity.type !== 'boat') return;
+      var pose = poses[entity.id] || entity.initial;
+      var dist = distanceMeters(startPose, pose);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestId = entity.id;
+      }
+    });
+    return bestId;
+  }
+
+  function getTeammatePassTargetAtCanvasPoint(x, y, passerTeam, passerId) {
+    if (!passerTeam || !passerId) return null;
+    var slop = Math.max(10, fieldScale * 0.35);
+
+    for (var i = state.tactic.entities.length - 1; i >= 0; i--) {
+      var entity = state.tactic.entities[i];
+      if (entity.type !== 'boat' || entity.team !== passerTeam || entity.id === passerId) continue;
+      var ghostPose = getGhostPose(entity.id);
+      if (ghostPose && hitTestBoatPassTarget(entity, ghostPose, x, y, slop)) {
+        return {
+          boatId: entity.id,
+          targetPose: getBoatTargetPose(entity.id),
+          syncToEntityId: entity.id,
+        };
+      }
+    }
+
+    var poses = getPosesAtTime();
+    for (var j = state.tactic.entities.length - 1; j >= 0; j--) {
+      var boat = state.tactic.entities[j];
+      if (boat.type !== 'boat' || boat.team !== passerTeam || boat.id === passerId) continue;
+      var livePose = poses[boat.id] || boat.initial;
+      if (hitTestBoatPassTarget(boat, livePose, x, y, slop)) {
+        return {
+          boatId: boat.id,
+          targetPose: clone(livePose),
+          syncToEntityId: null,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  function routeHitSlopPx() {
+    return Math.max(pathLineWidth() / 2 + 8, fieldScale * 0.25);
+  }
+
+  function getClosestPointOnRouteCanvas(segment, canvasX, canvasY) {
+    var arcData = getSegmentArcData(segment);
+    var bestDist = Infinity;
+    var bestT = 0;
+    var bestArc = 0;
+    var samples = 56;
+    for (var i = 0; i <= samples; i++) {
+      var t = i / samples;
+      var pose = poseAlongSegment(segment, t, null);
+      var canvasPose = metersToCanvas(pose);
+      var dist = Math.hypot(canvasPose.x - canvasX, canvasPose.y - canvasY);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestT = t;
+        bestArc = arcDistanceAtProgress(arcData, t);
+      }
+    }
+    return {
+      distance: bestDist,
+      t: bestT,
+      arcDistance: bestArc,
+      pose: poseAlongSegment(segment, bestT, null),
+    };
+  }
+
+  function getTeammateRoutePassTargetAtCanvasPoint(x, y, passerTeam, passerId) {
+    if (!passerTeam || !passerId) return null;
+    var slop = routeHitSlopPx();
+    var best = null;
+
+    state.tactic.entities.forEach(function (entity) {
+      if (entity.type !== 'boat' || entity.team !== passerTeam || entity.id === passerId) return;
+      var segment = getPrimarySegment(entity.id);
+      if (!segment) return;
+      var hit = getClosestPointOnRouteCanvas(segment, x, y);
+      if (hit.distance > slop) return;
+      if (!best || hit.distance < best.distance) {
+        best = {
+          distance: hit.distance,
+          boatId: entity.id,
+          targetPose: clone(hit.pose),
+          syncToEntityId: entity.id,
+          syncArcDistance: hit.arcDistance,
+          passType: 'route',
+        };
+      }
+    });
+
+    return best;
+  }
+
+  function resolveBallPassTargetAtCanvasPoint(x, y, passerTeam, passerId) {
+    return getTeammatePassTargetAtCanvasPoint(x, y, passerTeam, passerId)
+      || getTeammateRoutePassTargetAtCanvasPoint(x, y, passerTeam, passerId);
+  }
+
+  function finishBallRouteDrag(drag, point) {
+    var passerId = resolveBallPasserId(drag.startPose, drag.holderId);
+    var passerTeam = getHolderTeam(passerId);
+    var passTarget = drag.passTarget
+      || (passerId
+        ? resolveBallPassTargetAtCanvasPoint(point.x, point.y, passerTeam, passerId)
+        : null);
+
+    if (passTarget) {
+      if (distanceMeters(drag.startPose, passTarget.targetPose) < 0.35) return;
+      createBallRouteSegment(drag.startPose, passTarget.targetPose, {
+        passType: passTarget.passType || 'direct',
+        targetEntityId: passTarget.boatId,
+        syncToEntityId: passTarget.syncToEntityId,
+        syncArcDistance: passTarget.syncArcDistance,
+      });
+      if (passTarget.syncToEntityId && !getPrimarySegment(passTarget.syncToEntityId)) {
+        setMessage(t('message.syncNoBoatRoute'));
+      }
+      return;
+    }
+
+    var endPose = drag.previewPose;
+    if (!endPose) {
+      var meters = canvasToMeters(point.x, point.y, 0);
+      endPose = clampPoseToField({ x: meters.x, y: meters.y, rotation: 0 });
+    }
+    if (distanceMeters(drag.startPose, endPose) < 0.35) return;
+    createBallRouteSegment(drag.startPose, endPose, { passType: 'free' });
+  }
+
+  function resolveBallHolderAfterRoutes(routes, prevHolderId) {
+    var ballSeg = routes && routes.ball;
+    if (ballSeg) {
+      if (ballSeg.passType === 'free') return null;
+      if (ballSeg.syncToEntityId) return ballSeg.syncToEntityId;
+      if (ballSeg.targetEntityId) return ballSeg.targetEntityId;
+      return null;
+    }
+
+    var claimHolder = resolveBallClaimHolder(routes);
+    if (claimHolder) return claimHolder;
+
+    if (prevHolderId && routes && routes[prevHolderId]) return prevHolderId;
+    return prevHolderId || null;
   }
 
   function isEntityHighlighted(entityId) {
@@ -597,17 +1139,18 @@
     return false;
   }
 
-  function openEntityActions(entityId) {
+  function openEntityActions(entityId, options) {
     if (!canEdit() || state.startPoseEdit) return;
     var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
-    var actions = getEntityActions(entity);
+    var atGhost = !!(options && options.atGhost);
+    var actions = getEntityActions(entity, { atGhost: atGhost });
     if (actions.length === 0) return;
-    if (actions.length === 1) {
+    if (actions.length === 1 && !atGhost) {
       closeActionMenu();
       startBoatTool(actions[0], entityId);
       return;
     }
-    state.actionMenu = { entityId: entityId };
+    state.actionMenu = { entityId: entityId, atGhost: atGhost };
     renderAll();
   }
 
@@ -670,27 +1213,39 @@
           distanceMeters(startPose, endPose) / 3
         )
         : null;
-      var duration = segmentDuration(startPose, endPose, entity);
       routes[entity.id] = {
         startTime: 0,
-        endTime: duration,
+        endTime: 0,
         startPose: clone(startPose),
         endPose: clone(endPose),
         controlOut: controls ? controls.controlOut : null,
         controlIn: controls ? controls.controlIn : null,
       };
     });
+    applyRouteDurations(routes);
     return routes;
+  }
+
+  function routeSegmentDuration(segment, entity) {
+    if (!segment) return 0;
+    if ((segment.endTime || 0) > (segment.startTime || 0)) {
+      return segment.endTime - (segment.startTime || 0);
+    }
+    return entityMoveDuration(segment.startPose, segment.endPose, entity);
   }
 
   function maxDurationOfRoutes(routes) {
     var max = 0;
     if (!routes) return 0;
+    if (isBoatSpeedSyncArrival()) {
+      max = boatSyncedStepDuration(routes);
+    }
     Object.keys(routes).forEach(function (entityId) {
       var segment = routes[entityId];
       if (!segment) return;
       var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
-      var duration = segmentDuration(segment.startPose, segment.endPose, entity);
+      if (isBoatSpeedSyncArrival() && entity && entity.type === 'boat') return;
+      var duration = routeSegmentDuration(segment, entity);
       if (duration > max) max = duration;
     });
     return max;
@@ -702,11 +1257,9 @@
     Object.keys(routes).forEach(function (entityId) {
       var segment = clone(routes[entityId]);
       if (!segment) return;
-      var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
-      segment.startTime = 0;
-      segment.endTime = segmentDuration(segment.startPose, segment.endPose, entity);
       normalized[entityId] = segment;
     });
+    applyRouteDurations(normalized);
     return normalized;
   }
 
@@ -791,6 +1344,10 @@
       }
 
       var localTime = time - transition.startTime;
+      var motionOptsByEntity = {};
+      state.tactic.entities.forEach(function (entity) {
+        motionOptsByEntity[entity.id] = getEntityMotionOpts(timeline, i, entity.id);
+      });
       state.tactic.entities.forEach(function (entity) {
         var segment = transition.routes[entity.id];
         if (!segment) {
@@ -802,12 +1359,20 @@
         var progress = segment.endTime <= 0
           ? 1
           : clamp(localTime / segment.endTime, 0, 1);
-        poses[entity.id] = poseAlongSegment(
-          segment,
-          segmentPathProgress(segment, progress, entity),
-          entity
-        );
+        var motionOpts = motionOptsByEntity[entity.id];
+        var pathT = entity.type === 'ball'
+          ? ballSegmentPathProgress(segment, localTime)
+          : segmentPathProgress(segment, progress, entity, motionOpts);
+        poses[entity.id] = poseAlongSegment(segment, pathT, entity);
       });
+      var step = state.tactic.steps[transition.stepIndex];
+      applyBallPoseOverrides(
+        poses,
+        transition.routes,
+        localTime,
+        step && step.ballHolderId,
+        motionOptsByEntity
+      );
       break;
     }
     return poses;
@@ -847,12 +1412,13 @@
     state.transport.playing = false;
     stopTransportRaf();
     updateTransportBar();
+    ensureConfettiLoop();
   }
 
   function enterPlaybackMode() {
     if (state.isPlaying || state.playbackMode) return;
     if (!hasPlayableSteps()) {
-      setMessage('Nog geen stappen om af te spelen.');
+      setMessage(t('message.noSteps'));
       return;
     }
     exitStartPoseEdit();
@@ -863,7 +1429,7 @@
     state.transport.playing = false;
     closeActionMenu();
     clearPointerInteraction();
-    setMessage('Afspeelmodus.');
+    setMessage(t('message.playbackMode'));
     renderAll();
     toggleTransportPlay();
   }
@@ -878,14 +1444,8 @@
     applyStepPoses(state.tactic.steps[state.tactic.currentStepIndex]);
     state.currentTime = 0;
     state.transport.time = 0;
-    setMessage('Bewerkmodus.');
+    setMessage(t('message.editMode'));
     renderAll();
-  }
-
-  function togglePlaybackMode() {
-    if (state.isPlaying) return;
-    if (state.playbackMode) exitPlaybackMode();
-    else enterPlaybackMode();
   }
 
   function seekTransportToStep(index) {
@@ -941,6 +1501,7 @@
       state.transport.time = 0;
     }
 
+    resetGoalTracking();
     state.transport.playing = true;
     state.transport.lastFrameAt = null;
     updateToolbar();
@@ -960,6 +1521,7 @@
     updateTransportBar();
     updateToolbar();
     renderCanvas();
+    syncGoalTracking(false);
     renderStepsPanel();
   }
 
@@ -980,17 +1542,24 @@
     var speedUp = document.getElementById('btn-speed-up');
     var iconPlay = document.getElementById('transport-icon-play');
     var iconPause = document.getElementById('transport-icon-pause');
-    var modeBtn = document.getElementById('btn-playback-mode');
+    var editModeBtn = document.getElementById('btn-mode-edit');
+    var playModeBtn = document.getElementById('btn-mode-play');
     if (!bar) return;
 
     var playable = hasPlayableSteps();
-    if (modeBtn) {
-      modeBtn.disabled = state.isPlaying || (!playable && !state.playbackMode);
-      modeBtn.classList.toggle('is-active', state.playbackMode);
-      modeBtn.textContent = state.playbackMode ? 'Bewerken' : 'Afspelen';
-      modeBtn.title = state.playbackMode
-        ? 'Terug naar bewerken'
-        : (playable ? 'Afspeelmodus openen' : 'Nog geen stappen om af te spelen');
+    if (editModeBtn) {
+      editModeBtn.classList.toggle('is-active', !state.playbackMode);
+      editModeBtn.setAttribute('aria-pressed', !state.playbackMode ? 'true' : 'false');
+      editModeBtn.disabled = state.isPlaying;
+      editModeBtn.title = t('header.edit.title');
+    }
+    if (playModeBtn) {
+      playModeBtn.classList.toggle('is-active', state.playbackMode);
+      playModeBtn.setAttribute('aria-pressed', state.playbackMode ? 'true' : 'false');
+      playModeBtn.disabled = state.isPlaying || (!playable && !state.playbackMode);
+      playModeBtn.title = playable
+        ? t('header.playback.titleOpen')
+        : t('header.playback.titleNoSteps');
     }
 
     bar.classList.toggle('hidden', !state.playbackMode);
@@ -1014,7 +1583,7 @@
     if (speedUp) speedUp.disabled = !playable;
     if (playBtn) {
       playBtn.disabled = !playable;
-      playBtn.title = state.transport.playing ? 'Pauze' : 'Afspelen';
+      playBtn.title = state.transport.playing ? t('transport.pause') : t('transport.play');
       playBtn.setAttribute('aria-label', playBtn.title);
     }
     if (iconPlay) iconPlay.classList.toggle('hidden', state.transport.playing);
@@ -1028,12 +1597,14 @@
     }
     state.isPlaying = false;
     state.playMode = null;
+    ensureConfettiLoop();
   }
 
   function animateCurrentRoutes(onComplete) {
     recomputeAllSegmentDurations();
     var duration = maxRouteEndTime();
     state.currentTime = 0;
+    resetGoalTracking();
 
     if (duration <= 0) {
       if (onComplete) onComplete();
@@ -1057,9 +1628,71 @@
     state.playRaf = requestAnimationFrame(frame);
   }
 
+  function posePositionDelta(newPose, oldPose) {
+    if (!newPose || !oldPose) return { dx: 0, dy: 0 };
+    return {
+      dx: newPose.x - oldPose.x,
+      dy: newPose.y - oldPose.y,
+    };
+  }
+
+  // Pas route-start aan na een gewijzigde eindpositie van de vorige stap.
+  // Eindposes en route-einden blijven gelijk; controlOut schuift mee met de start.
+  function updateSegmentStartPose(segment, newStart, oldStart) {
+    if (!segment || !newStart) return;
+    oldStart = oldStart || segment.startPose;
+    if (!oldStart) {
+      segment.startPose = clone(newStart);
+      return;
+    }
+    var delta = posePositionDelta(newStart, oldStart);
+    segment.startPose = clone(newStart);
+    if (segment.controlOut) {
+      segment.controlOut.x += delta.dx;
+      segment.controlOut.y += delta.dy;
+    }
+  }
+
+  function updateNextStepRouteStarts(nextStep, prevStep, oldPrevPoses) {
+    if (!nextStep || !prevStep) return;
+    var routes = nextStep.routes;
+    if (!routes || !Object.keys(routes).length) return;
+    var newPrevPoses = prevStep.poses || {};
+    oldPrevPoses = oldPrevPoses || {};
+    Object.keys(routes).forEach(function (entityId) {
+      var segment = routes[entityId];
+      if (!segment || !segment.startPose) return;
+      var oldStart = clone(segment.startPose);
+      var newStart;
+      if (entityId === 'ball') {
+        var holderId = prevStep.ballHolderId;
+        if (holderId && newPrevPoses[holderId] && oldPrevPoses[holderId]) {
+          var holderDelta = posePositionDelta(newPrevPoses[holderId], oldPrevPoses[holderId]);
+          newStart = {
+            x: oldStart.x + holderDelta.dx,
+            y: oldStart.y + holderDelta.dy,
+            rotation: oldStart.rotation || 0,
+          };
+        } else if (newPrevPoses.ball && oldPrevPoses.ball) {
+          newStart = clone(newPrevPoses.ball);
+        } else {
+          return;
+        }
+      } else if (newPrevPoses[entityId]) {
+        newStart = newPrevPoses[entityId];
+      } else {
+        return;
+      }
+      updateSegmentStartPose(segment, newStart, oldStart);
+    });
+    applyRouteDurations(routes);
+  }
+
   function commitPlaybackToNextStep() {
     var reviewing = isReviewingCompletedStep();
     var routes = captureDraftRoutes();
+    var prevStep = getCurrentStep();
+    var prevHolderId = prevStep && prevStep.ballHolderId;
     var endPoses = getPosesAtTime();
     state.tactic.entities.forEach(function (entity) {
       if (!endPoses[entity.id]) return;
@@ -1070,14 +1703,20 @@
     state.currentTime = 0;
 
     ensureSteps(state.tactic);
+    var nextHolderId = resolveBallHolderAfterRoutes(routes, prevHolderId);
     if (reviewing) {
       var index = state.tactic.currentStepIndex;
       var step = state.tactic.steps[index];
       if (step) {
+        var oldEndPoses = clone(step.poses);
         step.poses = captureEntityPoses(state.tactic.entities);
         step.routes = routes;
+        step.ballHolderId = nextHolderId;
+        var followingStep = state.tactic.steps[index + 1];
+        if (followingStep) {
+          updateNextStepRouteStarts(followingStep, step, oldEndPoses);
+        }
       }
-      state.tactic.steps = state.tactic.steps.slice(0, index + 1);
       state.tactic.updatedAt = new Date().toISOString();
       closeActionMenu();
       clearPointerInteraction();
@@ -1089,7 +1728,8 @@
     var nextStep = createStep(
       stepNameForIndex(nextIndex),
       captureEntityPoses(state.tactic.entities),
-      routes
+      routes,
+      nextHolderId
     );
     state.tactic.steps = state.tactic.steps.slice(0, nextIndex);
     state.tactic.steps.push(nextStep);
@@ -1103,8 +1743,9 @@
   function finishGoPlayback() {
     stopPlayback();
     commitPlaybackToNextStep();
-    setMessage(state.tactic.steps[state.tactic.currentStepIndex].name + ' opgeslagen.');
+    setMessage(t('message.stepSaved', { name: state.tactic.steps[state.tactic.currentStepIndex].name }));
     renderAll();
+    ensureConfettiLoop();
   }
 
   function runGoPlayback() {
@@ -1149,7 +1790,7 @@
     closeActionMenu();
     clearPointerInteraction();
     state.tactic.updatedAt = new Date().toISOString();
-    setMessage(state.tactic.steps[index].name + ' geselecteerd.');
+    setMessage(t('message.stepSelected', { name: state.tactic.steps[index].name }));
     renderAll();
   }
 
@@ -1190,7 +1831,38 @@
     recordHistory();
     step.name = value;
     state.tactic.updatedAt = new Date().toISOString();
-    setMessage('Stap hernoemd naar ' + value + '.');
+    setMessage(t('message.stepRenamed', { name: value }));
+    renderAll();
+  }
+
+  function deleteLastStep() {
+    if (!canEdit() || state.isPlaying) return;
+    ensureSteps(state.tactic);
+    if (state.tactic.steps.length <= 1) return;
+
+    if (state.stepRename) cancelStepRename();
+    if (state.startPoseEdit) exitStartPoseEdit();
+
+    var lastIndex = state.tactic.steps.length - 1;
+    var deletedStep = state.tactic.steps[lastIndex];
+    var deletedName = deletedStep.name || stepNameForIndex(lastIndex);
+
+    recordHistory();
+    stopPlayback();
+    invalidateTransportTimeline();
+
+    var wasOnLast = state.tactic.currentStepIndex === lastIndex;
+    state.tactic.steps.pop();
+    if (wasOnLast || state.tactic.currentStepIndex >= state.tactic.steps.length) {
+      state.tactic.currentStepIndex = state.tactic.steps.length - 1;
+    }
+
+    applyStepDiagram(state.tactic.currentStepIndex);
+    state.currentTime = 0;
+    closeActionMenu();
+    clearPointerInteraction();
+    state.tactic.updatedAt = new Date().toISOString();
+    setMessage(t('message.stepDeleted', { name: deletedName }));
     renderAll();
   }
 
@@ -1221,7 +1893,7 @@
         input.type = 'text';
         input.className = 'step-rename-input';
         input.value = state.stepRename.value;
-        input.setAttribute('aria-label', 'Stapnaam');
+        input.setAttribute('aria-label', t('steps.name.aria'));
         input.maxLength = 40;
         input.addEventListener('input', function () {
           if (state.stepRename && state.stepRename.index === index) {
@@ -1260,8 +1932,8 @@
           var renameBtn = document.createElement('button');
           renameBtn.type = 'button';
           renameBtn.className = 'step-rename-btn';
-          renameBtn.title = 'Hernoemen';
-          renameBtn.setAttribute('aria-label', 'Hernoem ' + (step.name || stepNameForIndex(index)));
+          renameBtn.title = t('steps.rename');
+          renameBtn.setAttribute('aria-label', t('steps.rename.aria', { name: step.name || stepNameForIndex(index) }));
           renameBtn.innerHTML =
             '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">' +
             '<path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>' +
@@ -1277,6 +1949,28 @@
           });
           item.appendChild(renameBtn);
         }
+
+        var isLastStep = index === state.tactic.steps.length - 1;
+        if (editable && isLastStep && index > 0) {
+          var deleteBtn = document.createElement('button');
+          deleteBtn.type = 'button';
+          deleteBtn.className = 'step-delete-btn';
+          deleteBtn.title = t('steps.delete');
+          deleteBtn.setAttribute('aria-label', t('steps.delete.aria', { name: step.name || stepNameForIndex(index) }));
+          deleteBtn.disabled = state.isPlaying;
+          deleteBtn.innerHTML =
+            '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">' +
+            '<path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>' +
+            '</svg>';
+          deleteBtn.addEventListener('mousedown', function (event) {
+            event.preventDefault();
+          });
+          deleteBtn.addEventListener('click', function (event) {
+            event.stopPropagation();
+            deleteLastStep();
+          });
+          item.appendChild(deleteBtn);
+        }
       }
 
       list.appendChild(item);
@@ -1288,7 +1982,7 @@
       var draftBtn = document.createElement('button');
       draftBtn.type = 'button';
       draftBtn.className = 'step-btn is-draft';
-      draftBtn.textContent = stepNameForIndex(state.tactic.currentStepIndex + 1) + ' (concept)';
+      draftBtn.textContent = stepNameForIndex(state.tactic.currentStepIndex + 1) + ' ' + t('steps.draft');
       draftBtn.disabled = true;
       draftItem.appendChild(draftBtn);
       list.appendChild(draftItem);
@@ -1304,25 +1998,25 @@
 
     if (goBtn) {
       goBtn.disabled = !canEdit() || !hasDraftRoutes() || state.startPoseEdit;
-      goBtn.textContent = state.isPlaying && state.playMode === 'go' ? 'Bezig…' : 'Go';
+      goBtn.textContent = state.isPlaying && state.playMode === 'go' ? t('steps.go.busy') : t('steps.go');
     }
     if (hint) {
       if (state.startPoseEdit) {
-        hint.textContent = 'Sleep om te verplaatsen, klik om te draaien. Daarna Vastzetten.';
+        hint.textContent = t('steps.hint.startEdit');
       } else if (previewing) {
         hint.textContent = state.transport.playing
-          ? 'Bezig met afspelen…'
-          : 'Afspeelmodus — kies Bewerken in de kop om terug te gaan.';
+          ? t('steps.hint.playing')
+          : t('steps.hint.playback');
       } else if (state.isPlaying) {
-        hint.textContent = 'Boten verplaatsen…';
+        hint.textContent = t('steps.hint.moving');
       } else if (reviewing) {
-        hint.textContent = 'Eindresultaat van deze stap — pas aan of druk Go.';
+        hint.textContent = t('steps.hint.review');
       } else if (drafting) {
-        hint.textContent = 'Go verplaatst alle boten en slaat de volgende stap op.';
+        hint.textContent = t('steps.hint.draft');
       } else if (hasPlayableSteps()) {
-        hint.textContent = 'Open Afspelen in de kop om de uitvoering te bekijken.';
+        hint.textContent = t('steps.hint.hasSteps');
       } else {
-        hint.textContent = 'Sleep boten om ghosts te zetten, daarna Go.';
+        hint.textContent = t('steps.hint.default');
       }
     }
     updateTransportBar();
@@ -1363,20 +2057,22 @@
       setStartBtn.disabled = !editable || !onStart;
       setStartBtn.classList.toggle('is-editing', editingStart);
       var label = setStartBtn.querySelector('.btn-toolbar-label');
-      if (label) label.textContent = editingStart ? 'Vastzetten' : 'Zet startpositie';
+      if (label) label.textContent = editingStart ? t('steps.lock') : t('steps.setStart');
       setStartBtn.title = editingStart
-        ? 'Huidige posities als startpositie vastzetten'
-        : 'Modus om startposities vrij te zetten';
+        ? t('steps.setStart.titleConfirm')
+        : t('steps.setStart.title');
     }
     if (gotoStartBtn) {
       gotoStartBtn.disabled = !editable || editingStart;
     }
     var resetBtn = document.getElementById('btn-reset-all');
     if (resetBtn) resetBtn.disabled = !editable;
+    var importBtn = document.getElementById('btn-import-tactic');
+    if (importBtn) importBtn.disabled = !editable;
     if (indicator) {
       var set = hasStartPosition();
       indicator.classList.toggle('is-set', set);
-      indicator.title = set ? 'Startpositie is gezet' : 'Geen startpositie gezet';
+      indicator.title = set ? t('steps.startSet') : t('steps.startNotSet');
     }
     renderStepsPanel();
   }
@@ -1416,7 +2112,7 @@
     syncCurrentStepPoses();
     state.startPoseEdit = true;
     closeActionMenu();
-    setMessage('Sleep om te verplaatsen, klik om te draaien. Druk op Vastzetten om te bevestigen.');
+    setMessage(t('message.startEdit'));
     renderAll();
   }
 
@@ -1432,14 +2128,25 @@
     recordHistory();
     clearDraftRoutes();
     var snapshot = captureEntityPoses(state.tactic.entities);
+    var holderId = getBallHolderId() || defaultStartBallHolderId(state.tactic.settings);
+    if (holderId && snapshot[holderId]) {
+      snapshot.ball = clone(snapshot[holderId]);
+    }
     state.tactic.startPositions = snapshot;
     ensureSteps(state.tactic);
+    var oldStartPoses = clone(state.tactic.steps[0].poses);
     state.tactic.steps[0].poses = clone(snapshot);
+    if (holderId) state.tactic.steps[0].ballHolderId = holderId;
+    var firstStep = state.tactic.steps[1];
+    if (firstStep) {
+      updateNextStepRouteStarts(firstStep, state.tactic.steps[0], oldStartPoses);
+    }
+    invalidateTransportTimeline();
     state.tactic.updatedAt = new Date().toISOString();
     state.startPoseEdit = false;
     closeActionMenu();
     clearPointerInteraction();
-    setMessage('Startpositie gezet.');
+    setMessage(t('message.startSet'));
     renderAll();
   }
 
@@ -1456,7 +2163,7 @@
       confirmOnUp: false,
     };
     canvas.classList.add('tool-active');
-    setMessage('Beweeg om te draaien, klik om te bevestigen.');
+    setMessage(t('message.startRotate'));
     renderAll();
   }
 
@@ -1482,13 +2189,13 @@
     closeActionMenu();
     clearPointerInteraction();
     state.tactic.updatedAt = new Date().toISOString();
-    setMessage('Terug naar begin van deze stap.');
+    setMessage(t('message.gotoStart'));
     renderAll();
   }
 
   function resetAll() {
     if (!canEdit()) return;
-    if (!window.confirm('Weet je het zeker? Alles wordt gereset, inclusief de startpositie.')) return;
+    if (!window.confirm(t('confirm.resetAll'))) return;
     recordHistory();
     stopPlayback();
     state.startPoseEdit = false;
@@ -1499,7 +2206,7 @@
     closeActionMenu();
     clearPointerInteraction();
     invalidateTransportTimeline();
-    setMessage('Alles gereset, inclusief startpositie.');
+    setMessage(t('message.resetAll'));
     renderAll();
   }
 
@@ -1648,6 +2355,32 @@
     var total = travelTime(distance, speed, accel);
     if (total < 1e-8) return 1;
     return clamp(distanceAtTime(t * total, distance, speed, accel) / distance, 0, 1);
+  }
+
+  // Hermite-easing: startSlope/endSlope bepalen de snelheid aan begin/einde (0 = stilstand).
+  // Bij opeenvolgende stappen sluiten de hellingen aan zodat de boot niet vertraagt en opnieuw versnelt.
+  function hermiteProgress(timeProgress, startSlope, endSlope) {
+    var t = clamp(timeProgress, 0, 1);
+    var t2 = t * t;
+    var t3 = t2 * t;
+    return (t3 - 2 * t2 + t) * startSlope + (-2 * t3 + 3 * t2) + (t3 - t2) * endSlope;
+  }
+
+  function entityHasRouteInTransition(transition, entityId) {
+    return !!(transition && transition.routes && transition.routes[entityId]);
+  }
+
+  function getEntityMotionOpts(timeline, transitionIndex, entityId) {
+    var transitions = timeline.transitions;
+    var transition = transitions[transitionIndex];
+    if (!entityHasRouteInTransition(transition, entityId)) {
+      return { continuesFromPrev: false, continuesToNext: false };
+    }
+    var continuesFromPrev = transitionIndex > 0
+      && entityHasRouteInTransition(transitions[transitionIndex - 1], entityId);
+    var continuesToNext = transitionIndex < transitions.length - 1
+      && entityHasRouteInTransition(transitions[transitionIndex + 1], entityId);
+    return { continuesFromPrev: continuesFromPrev, continuesToNext: continuesToNext };
   }
 
   function rotationFromTangent(dx, dy, fallback) {
@@ -1863,6 +2596,293 @@
     return rotationFromTangent(tangent.dx, tangent.dy, fallbackRotation);
   }
 
+  function getSegmentArcData(segment) {
+    var path = getSegmentPath(segment);
+    var table = [{ t: 0, distance: 0 }];
+    var total = 0;
+    var prev = { x: path.p0.x, y: path.p0.y };
+    for (var i = 1; i <= ARC_SAMPLES; i++) {
+      var t = i / ARC_SAMPLES;
+      var pt = cubicPoint(path.p0, path.p1, path.p2, path.p3, t);
+      total += Math.hypot(pt.x - prev.x, pt.y - prev.y);
+      table.push({ t: t, distance: total });
+      prev = pt;
+    }
+    return { table: table, total: total };
+  }
+
+  function poseAtArcDistance(segment, distance, arcData) {
+    arcData = arcData || getSegmentArcData(segment);
+    distance = clamp(distance, 0, arcData.total);
+    if (distance <= 0) return clone(segment.startPose);
+    if (distance >= arcData.total) return clone(segment.endPose);
+    var table = arcData.table;
+    for (var i = 1; i < table.length; i++) {
+      if (table[i].distance >= distance) {
+        var prev = table[i - 1];
+        var curr = table[i];
+        var span = curr.distance - prev.distance;
+        var frac = span <= 1e-8 ? 0 : (distance - prev.distance) / span;
+        var t = prev.t + frac * (curr.t - prev.t);
+        var point = poseAlongSegment(segment, t, null);
+        return { x: point.x, y: point.y, rotation: 0 };
+      }
+    }
+    return clone(segment.endPose);
+  }
+
+  function arcDistanceAtProgress(arcData, progress) {
+    progress = clamp(progress, 0, 1);
+    if (progress <= 0) return 0;
+    if (progress >= 1) return arcData.total;
+    var table = arcData.table;
+    for (var i = 1; i < table.length; i++) {
+      if (table[i].t >= progress) {
+        var prev = table[i - 1];
+        var curr = table[i];
+        var span = curr.t - prev.t;
+        var frac = span <= 1e-8 ? 0 : (progress - prev.t) / span;
+        return prev.distance + frac * (curr.distance - prev.distance);
+      }
+    }
+    return arcData.total;
+  }
+
+  function getDribbleThrowDistance() {
+    return kmhToMs(getSettings().boatSpeed) * DRIBBLE_AHEAD_SECONDS;
+  }
+
+  function getDribbleDriveStart(pathLength, throwDistance) {
+    return Math.max(0, pathLength - throwDistance);
+  }
+
+  function localTimeAtArcDistance(segment, targetArc, entity, motionOpts, segmentEndTime) {
+    if (targetArc <= 0 || segmentEndTime <= 0) return 0;
+    var arcData = getSegmentArcData(segment);
+    targetArc = Math.min(targetArc, arcData.total);
+    if (targetArc >= arcData.total) return segmentEndTime;
+
+    var low = 0;
+    var high = 1;
+    for (var i = 0; i < 24; i++) {
+      var mid = (low + high) / 2;
+      var pathProgress = segmentPathProgress(segment, mid, entity, motionOpts);
+      var arc = arcDistanceAtProgress(arcData, pathProgress);
+      if (arc < targetArc) low = mid;
+      else high = mid;
+    }
+    return ((low + high) / 2) * segmentEndTime;
+  }
+
+  function getDribbleBallPose(boatSegment, boatPose, localTime, segmentEndTime, holderEntity, motionOpts) {
+    var arcData = getSegmentArcData(boatSegment);
+    var pathLength = arcData.total;
+    var throwDistance = getDribbleThrowDistance();
+    if (pathLength <= throwDistance) {
+      return clone(boatPose);
+    }
+    var timeProgress = segmentEndTime <= 0 ? 1 : clamp(localTime / segmentEndTime, 0, 1);
+    var pathProgress = segmentPathProgress(boatSegment, timeProgress, holderEntity, motionOpts);
+    var boatArc = arcDistanceAtProgress(arcData, pathProgress);
+    var driveStart = getDribbleDriveStart(pathLength, throwDistance);
+    if (boatArc >= driveStart) {
+      return clone(boatPose);
+    }
+
+    var cycleIndex = Math.floor(boatArc / throwDistance);
+    var throwFromArc = cycleIndex * throwDistance;
+    var restArc = Math.min(driveStart, (cycleIndex + 1) * throwDistance);
+    var fromPose = poseAtArcDistance(boatSegment, throwFromArc, arcData);
+    var toPose = poseAtArcDistance(boatSegment, restArc, arcData);
+    var ballEntity = getBallEntity() || { type: 'ball' };
+    var throwDuration = entityMoveDuration(fromPose, toPose, ballEntity);
+    var throwStartTime = localTimeAtArcDistance(
+      boatSegment,
+      throwFromArc,
+      holderEntity,
+      motionOpts,
+      segmentEndTime
+    );
+    var elapsed = localTime - throwStartTime;
+
+    if (elapsed >= 0 && elapsed < throwDuration) {
+      var throwFrac = elapsed / throwDuration;
+      return {
+        x: fromPose.x + (toPose.x - fromPose.x) * throwFrac,
+        y: fromPose.y + (toPose.y - fromPose.y) * throwFrac,
+        rotation: 0,
+      };
+    }
+
+    return toPose;
+  }
+
+  function getDribbleBallPoseFromCatchArc(
+    boatSegment,
+    boatPose,
+    localTime,
+    segmentEndTime,
+    holderEntity,
+    motionOpts,
+    catchArc
+  ) {
+    var arcData = getSegmentArcData(boatSegment);
+    var pathLength = arcData.total;
+    var throwDistance = getDribbleThrowDistance();
+    var remainingLength = pathLength - catchArc;
+    if (remainingLength <= throwDistance) {
+      return clone(boatPose);
+    }
+
+    var timeProgress = segmentEndTime <= 0 ? 1 : clamp(localTime / segmentEndTime, 0, 1);
+    var pathProgress = segmentPathProgress(boatSegment, timeProgress, holderEntity, motionOpts);
+    var boatArc = arcDistanceAtProgress(arcData, pathProgress);
+    if (boatArc < catchArc) {
+      return poseAtArcDistance(boatSegment, catchArc, arcData);
+    }
+
+    var effectiveArc = boatArc - catchArc;
+    var driveStart = getDribbleDriveStart(remainingLength, throwDistance);
+    if (effectiveArc >= driveStart) {
+      return clone(boatPose);
+    }
+
+    var cycleIndex = Math.floor(effectiveArc / throwDistance);
+    var throwFromArc = catchArc + cycleIndex * throwDistance;
+    var restArc = Math.min(catchArc + driveStart, catchArc + (cycleIndex + 1) * throwDistance);
+    var fromPose = poseAtArcDistance(boatSegment, throwFromArc, arcData);
+    var toPose = poseAtArcDistance(boatSegment, restArc, arcData);
+    var ballEntity = getBallEntity() || { type: 'ball' };
+    var throwDuration = entityMoveDuration(fromPose, toPose, ballEntity);
+    var throwStartTime = localTimeAtArcDistance(
+      boatSegment,
+      throwFromArc,
+      holderEntity,
+      motionOpts,
+      segmentEndTime
+    );
+    var elapsed = localTime - throwStartTime;
+
+    if (elapsed >= 0 && elapsed < throwDuration) {
+      var throwFrac = elapsed / throwDuration;
+      return {
+        x: fromPose.x + (toPose.x - fromPose.x) * throwFrac,
+        y: fromPose.y + (toPose.y - fromPose.y) * throwFrac,
+        rotation: 0,
+      };
+    }
+
+    return toPose;
+  }
+
+  function applyBallPoseOverrides(poses, routes, localTime, ballHolderId, motionOptsByEntity) {
+    if (!poses) return;
+    var ballSeg = routes && routes.ball;
+    if (ballSeg && ballSeg.syncArcDistance != null && ballSeg.syncToEntityId) {
+      var arrivalTime = (ballSeg.throwDelay || 0) + (ballSeg.travelDuration || 0);
+      if (localTime >= arrivalTime - 1e-6) {
+        var receiverId = ballSeg.syncToEntityId;
+        var receiverSeg = routes[receiverId];
+        var receiverEntity = state.tactic.entities.find(function (item) { return item.id === receiverId; });
+        var motionOpts = motionOptsByEntity && motionOptsByEntity[receiverId];
+        if (receiverSeg && receiverEntity && poses[receiverId]) {
+          poses.ball = getDribbleBallPoseFromCatchArc(
+            receiverSeg,
+            poses[receiverId],
+            localTime,
+            receiverSeg.endTime,
+            receiverEntity,
+            motionOpts,
+            ballSeg.syncArcDistance
+          );
+        }
+        return;
+      }
+      return;
+    }
+    if (ballSeg) return;
+
+    var claim = getBallClaimAtTime(routes, localTime, motionOptsByEntity);
+    if (claim) {
+      var claimMotionOpts = motionOptsByEntity && motionOptsByEntity[claim.entityId];
+      poses.ball = getDribbleBallPoseFromCatchArc(
+        claim.segment,
+        poses[claim.entityId],
+        localTime,
+        claim.segment.endTime,
+        claim.entity,
+        claimMotionOpts,
+        claim.claimArc
+      );
+      return;
+    }
+
+    if (isDribbleActive(ballHolderId, routes)) {
+      var holderSeg = routes ? routes[ballHolderId] : getPrimarySegment(ballHolderId);
+      var holderEntity = state.tactic.entities.find(function (item) { return item.id === ballHolderId; });
+      if (!holderSeg || !holderEntity) return;
+      var motionOpts = motionOptsByEntity && motionOptsByEntity[ballHolderId];
+      poses.ball = getDribbleBallPose(
+        holderSeg,
+        poses[ballHolderId],
+        localTime,
+        holderSeg.endTime,
+        holderEntity,
+        motionOpts
+      );
+      return;
+    }
+
+    if (ballHolderId && poses[ballHolderId]) {
+      poses.ball = clone(poses[ballHolderId]);
+    }
+  }
+
+  function createBallRouteSegment(startPose, endPose, metadata) {
+    if (!canEdit()) return;
+    endPose = clampPoseToField(endPose);
+    if (distanceMeters(startPose, endPose) < 0.35) {
+      renderAll();
+      return;
+    }
+    recordHistory();
+    var track = getTrackForEntity('ball');
+    track.segments = [{
+      startTime: 0,
+      endTime: 0,
+      startPose: { x: startPose.x, y: startPose.y, rotation: 0 },
+      endPose: { x: endPose.x, y: endPose.y, rotation: 0 },
+      controlOut: null,
+      controlIn: null,
+      passType: metadata.passType || 'free',
+      targetEntityId: metadata.targetEntityId || null,
+      syncToEntityId: metadata.syncToEntityId || null,
+      syncArcDistance: metadata.syncArcDistance != null ? metadata.syncArcDistance : null,
+    }];
+    if (metadata.passType === 'free') {
+      setBallHolderId(null);
+    }
+    recomputeAllSegmentDurations();
+    state.tactic.updatedAt = new Date().toISOString();
+    renderAll();
+  }
+
+  function getBallRouteStyle(segment) {
+    if (!segment || !segment.passType || segment.passType === 'free') {
+      return { color: 'rgba(226, 232, 240, 0.95)', dash: [] };
+    }
+    if (segment.passType === 'direct') {
+      return { color: 'rgba(34, 211, 238, 0.92)', dash: [7, 5] };
+    }
+    if (segment.passType === 'route') {
+      return { color: 'rgba(52, 211, 153, 0.92)', dash: [6, 4] };
+    }
+    if (segment.passType === 'space') {
+      return { color: 'rgba(251, 191, 36, 0.92)', dash: [5, 5] };
+    }
+    return { color: 'rgba(226, 232, 240, 0.95)', dash: [] };
+  }
+
   function getTrackForEntity(entityId) {
     var track = state.tactic.tracks.find(function (item) { return item.entityId === entityId; });
     if (track) return track;
@@ -1881,16 +2901,19 @@
     return getSettings().motionTimingMode === 'stepDuration';
   }
 
-  function segmentDuration(start, end, entity) {
+  function isBoatSpeedSyncArrival() {
     var settings = getSettings();
-    if (isStepDurationTiming()) {
-      // Alle entiteiten arriveren tegelijk; snelheid volgt uit afstand / stapduur.
-      return Math.max(0.25, settings.stepDuration);
-    }
+    return settings.motionTimingMode !== 'stepDuration' && settings.boatSpeedSyncArrival !== false;
+  }
+
+  function usesSyncedArrivalTiming(entity) {
+    if (!entity || entity.type === 'ball') return false;
+    return isStepDurationTiming() || isBoatSpeedSyncArrival();
+  }
+
+  function entityMoveDuration(start, end, entity) {
+    var settings = getSettings();
     var distance = distanceMeters(start, end);
-    // Wall-clock duur volgt de ingestelde kruissnelheid. Versnelling beïnvloedt
-    // alleen het ease-profiel (segmentPathProgress), anders blijft topsnelheid
-    // op korte stukken zonder effect omdat die nooit bereikt wordt.
     var speedKmh = entity && entity.type === 'ball' ? settings.ballSpeed : settings.boatSpeed;
     var moveTime = distance / Math.max(0.1, kmhToMs(speedKmh));
     if (entity && entity.type === 'ball') {
@@ -1901,14 +2924,129 @@
     return Math.max(0.25, Math.max(moveTime, turnTime));
   }
 
-  function segmentPathProgress(segment, timeProgress, entity) {
+  function boatSyncedStepDuration(routes) {
+    var max = 0;
+    if (!routes) return max;
+    Object.keys(routes).forEach(function (entityId) {
+      var segment = routes[entityId];
+      if (!segment) return;
+      var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+      if (!entity || entity.type !== 'boat') return;
+      var duration = entityMoveDuration(segment.startPose, segment.endPose, entity);
+      if (duration > max) max = duration;
+    });
+    return max;
+  }
+
+  function segmentDuration(start, end, entity, syncedBoatDuration) {
+    if (isStepDurationTiming()) {
+      return Math.max(0.25, getSettings().stepDuration);
+    }
+    if (isBoatSpeedSyncArrival() && entity && entity.type === 'boat' && syncedBoatDuration > 0) {
+      return Math.max(0.25, syncedBoatDuration);
+    }
+    return entityMoveDuration(start, end, entity);
+  }
+
+  function applyRouteDurations(routes) {
+    if (!routes) return routes;
+    var syncedBoatDuration = isBoatSpeedSyncArrival() ? boatSyncedStepDuration(routes) : 0;
+    Object.keys(routes).forEach(function (entityId) {
+      var segment = routes[entityId];
+      if (!segment) return;
+      var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+      segment.startTime = segment.startTime || 0;
+      segment.endTime = segment.startTime + segmentDuration(
+        segment.startPose,
+        segment.endPose,
+        entity,
+        syncedBoatDuration
+      );
+    });
+    var ballSeg = routes.ball;
+    if (ballSeg) {
+      var ballEntity = state.tactic.entities.find(function (item) { return item.id === 'ball'; });
+      var travelDuration = Math.max(0.25, entityMoveDuration(
+        ballSeg.startPose,
+        ballSeg.endPose,
+        ballEntity
+      ));
+      ballSeg.travelDuration = travelDuration;
+      ballSeg.throwDelay = 0;
+
+      if (ballSeg.syncToEntityId) {
+        var targetSeg = routes[ballSeg.syncToEntityId];
+        if (targetSeg && targetSeg.endTime > 0) {
+          var syncEnd = targetSeg.endTime;
+          if (ballSeg.syncArcDistance != null) {
+            var targetEntity = state.tactic.entities.find(function (item) {
+              return item.id === ballSeg.syncToEntityId;
+            });
+            syncEnd = localTimeAtArcDistance(
+              targetSeg,
+              ballSeg.syncArcDistance,
+              targetEntity,
+              null,
+              targetSeg.endTime
+            );
+          }
+          if (syncEnd > travelDuration) {
+            ballSeg.throwDelay = syncEnd - travelDuration;
+            ballSeg.endTime = syncEnd;
+          } else {
+            ballSeg.endTime = travelDuration;
+          }
+        }
+      }
+    }
+    return routes;
+  }
+
+  function ballSegmentPathProgress(segment, localTime) {
+    if (!segment) return 0;
+    var travelDuration = segment.travelDuration;
+    if (!travelDuration || travelDuration <= 0) {
+      var ballEntity = getBallEntity();
+      travelDuration = Math.max(0.25, entityMoveDuration(
+        segment.startPose,
+        segment.endPose,
+        ballEntity
+      ));
+    }
+    var throwDelay = segment.throwDelay || 0;
+    if (localTime <= throwDelay) return 0;
+    if (localTime >= throwDelay + travelDuration) return 1;
+    return (localTime - throwDelay) / travelDuration;
+  }
+
+  function segmentPathProgress(segment, timeProgress, entity, motionOpts) {
     var progress = clamp(timeProgress, 0, 1);
     if (!entity || entity.type === 'ball') return progress;
+
+    var continuesFromPrev = motionOpts && motionOpts.continuesFromPrev;
+    var continuesToNext = motionOpts && motionOpts.continuesToNext;
+
+    // Opeenvolgende stappen: geen vertragen/versnellen tussen stappen.
+    if (continuesFromPrev && continuesToNext) {
+      return hermiteProgress(progress, 2, 2);
+    }
+    if (!continuesFromPrev && continuesToNext) {
+      return hermiteProgress(progress, 0, 2);
+    }
+    if (continuesFromPrev && !continuesToNext) {
+      return hermiteProgress(progress, 2, 0);
+    }
+
     var settings = getSettings();
     var distance = distanceMeters(segment.startPose, segment.endPose);
     var cruiseSpeedMs;
-    if (isStepDurationTiming()) {
-      var duration = Math.max(0.25, settings.stepDuration);
+    if (usesSyncedArrivalTiming(entity)) {
+      var duration = Math.max(0.25, (segment.endTime || 0) - (segment.startTime || 0));
+      if (duration <= 0.25) {
+        duration = isStepDurationTiming()
+          ? Math.max(0.25, settings.stepDuration)
+          : entityMoveDuration(segment.startPose, segment.endPose, entity);
+      }
       cruiseSpeedMs = distance / duration;
     } else {
       cruiseSpeedMs = kmhToMs(settings.boatSpeed);
@@ -1922,11 +3060,21 @@
   }
 
   function recomputeAllSegmentDurations() {
-    state.tactic.entities.forEach(function (entity) {
-      var segment = getPrimarySegment(entity.id);
-      if (!segment) return;
-      var duration = segmentDuration(segment.startPose, segment.endPose, entity);
-      segment.endTime = segment.startTime + duration;
+    var routes = captureDraftRoutes();
+    if (!Object.keys(routes).length) {
+      invalidateTransportTimeline();
+      return;
+    }
+    applyRouteDurations(routes);
+    Object.keys(routes).forEach(function (entityId) {
+      var segment = getPrimarySegment(entityId);
+      if (!segment || !routes[entityId]) return;
+      segment.startTime = routes[entityId].startTime;
+      segment.endTime = routes[entityId].endTime;
+      if (entityId === 'ball') {
+        segment.throwDelay = routes[entityId].throwDelay || 0;
+        segment.travelDuration = routes[entityId].travelDuration;
+      }
     });
     invalidateTransportTimeline();
   }
@@ -1942,19 +3090,24 @@
         var segment = track.segments[i];
         if (time < segment.startTime) break;
         if (time <= segment.endTime) {
-          var progress = segment.endTime <= segment.startTime
-            ? 1
-            : (time - segment.startTime) / (segment.endTime - segment.startTime);
-          poses[entity.id] = poseAlongSegment(
-            segment,
-            segmentPathProgress(segment, progress, entity),
-            entity
-          );
+          var localTime = time - (segment.startTime || 0);
+          var pathT = entity.type === 'ball'
+            ? ballSegmentPathProgress(segment, localTime)
+            : segmentPathProgress(
+              segment,
+              segment.endTime <= segment.startTime
+                ? 1
+                : localTime / (segment.endTime - segment.startTime),
+              entity
+            );
+          poses[entity.id] = poseAlongSegment(segment, pathT, entity);
           break;
         }
         poses[entity.id] = poseAlongSegment(segment, 1, entity);
       }
     });
+    var routes = captureDraftRoutes();
+    applyBallPoseOverrides(poses, routes, state.currentTime, getBallHolderId(), null);
     return poses;
   }
 
@@ -1999,6 +3152,128 @@
     }
   }
 
+  var EXPORT_FORMAT = 'flowboard-tactic';
+  var EXPORT_VERSION = 1;
+
+  function normalizeTacticName(value) {
+    var name = String(value || '').trim();
+    if (!name) name = t('tactic.defaultName');
+    return name.slice(0, 120);
+  }
+
+  function tacticExportFilename(name) {
+    var base = normalizeTacticName(name)
+      .replace(/[^\w\-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+    if (!base) base = 'tactic';
+    return base + '.flowboard.json';
+  }
+
+  function isExportDialogOpen() {
+    var backdrop = document.getElementById('export-backdrop');
+    return backdrop && !backdrop.classList.contains('hidden');
+  }
+
+  function openExportDialog() {
+    var backdrop = document.getElementById('export-backdrop');
+    var input = document.getElementById('export-name-input');
+    if (!backdrop || !input) return;
+    input.value = state.tactic.name || t('tactic.defaultName');
+    backdrop.classList.remove('hidden');
+    window.setTimeout(function () {
+      input.focus();
+      input.select();
+    }, 0);
+  }
+
+  function closeExportDialog() {
+    var backdrop = document.getElementById('export-backdrop');
+    if (backdrop) backdrop.classList.add('hidden');
+  }
+
+  function confirmExportTactic() {
+    var input = document.getElementById('export-name-input');
+    if (!input) return;
+    var name = normalizeTacticName(input.value);
+    if (name !== state.tactic.name) {
+      recordHistory();
+      state.tactic.name = name;
+      state.tactic.updatedAt = new Date().toISOString();
+    }
+    closeExportDialog();
+    performExportTactic(name);
+    setMessage(t('message.exportSuccess'));
+    renderAll();
+  }
+
+  function performExportTactic(name) {
+    var normalized = normalizeTacticName(name);
+    var tactic = clone(state.tactic);
+    tactic.name = normalized;
+    var payload = {
+      format: EXPORT_FORMAT,
+      version: EXPORT_VERSION,
+      exportedAt: new Date().toISOString(),
+      tactic: tactic,
+    };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = tacticExportFilename(normalized);
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportTactic() {
+    openExportDialog();
+  }
+
+  function parseTacticImportPayload(data) {
+    if (!data || typeof data !== 'object') return null;
+    if (data.tactic && typeof data.tactic === 'object') return data.tactic;
+    if (Array.isArray(data.entities)) return data;
+    return null;
+  }
+
+  function importTacticFromFile(file) {
+    if (!file || state.isViewOnly) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var data = JSON.parse(reader.result);
+        var raw = parseTacticImportPayload(data);
+        if (!raw) {
+          setMessage(t('message.importError'));
+          return;
+        }
+        if (!window.confirm(t('confirm.importOverwrite'))) return;
+        stopPlayback();
+        state.startPoseEdit = false;
+        if (state.playbackMode) exitPlaybackMode();
+        state.tactic = migrateTactic(raw);
+        state.tactic.id = uuid();
+        state.tactic.updatedAt = new Date().toISOString();
+        applyStepDiagram(state.tactic.currentStepIndex);
+        state.currentTime = 0;
+        state.history = { past: [], future: [] };
+        state.stepRename = null;
+        closeActionMenu();
+        clearPointerInteraction();
+        invalidateTransportTimeline();
+        setMessage(t('message.importSuccess'));
+        renderAll();
+      } catch (err) {
+        setMessage(t('message.importError'));
+      }
+    };
+    reader.onerror = function () {
+      setMessage(t('message.importError'));
+    };
+    reader.readAsText(file);
+  }
+
   function roundRect(context, x, y, width, height, radius) {
     var r = Math.min(radius, width / 2, height / 2);
     context.beginPath();
@@ -2012,6 +3287,50 @@
     context.lineTo(x, y + r);
     context.quadraticCurveTo(x, y, x + r, y);
     context.closePath();
+  }
+
+  function traceRoundedPolygon(context, points, scale, radiusMeters) {
+    var scaled = points.map(function (point) {
+      return { x: point[0] * scale, y: point[1] * scale };
+    });
+    var count = scaled.length;
+    if (count < 3) return;
+
+    var radius = radiusMeters * scale;
+    context.beginPath();
+
+    for (var i = 0; i < count; i++) {
+      var current = scaled[i];
+      var previous = scaled[(i - 1 + count) % count];
+      var next = scaled[(i + 1) % count];
+      var prevEdgeX = previous.x - current.x;
+      var prevEdgeY = previous.y - current.y;
+      var nextEdgeX = next.x - current.x;
+      var nextEdgeY = next.y - current.y;
+      var prevLen = Math.hypot(prevEdgeX, prevEdgeY);
+      var nextLen = Math.hypot(nextEdgeX, nextEdgeY);
+      if (!prevLen || !nextLen) continue;
+
+      var cornerRadius = Math.min(radius, prevLen * 0.48, nextLen * 0.48);
+      var startX = current.x + (prevEdgeX / prevLen) * cornerRadius;
+      var startY = current.y + (prevEdgeY / prevLen) * cornerRadius;
+      var endX = current.x + (nextEdgeX / nextLen) * cornerRadius;
+      var endY = current.y + (nextEdgeY / nextLen) * cornerRadius;
+
+      if (i === 0) context.moveTo(startX, startY);
+      else context.lineTo(startX, startY);
+      context.quadraticCurveTo(current.x, current.y, endX, endY);
+    }
+
+    context.closePath();
+  }
+
+  function traceBoatHull(context) {
+    traceRoundedPolygon(context, BOAT_HULL, fieldScale, BOAT_HULL_CORNER_RADIUS);
+  }
+
+  function traceBoatCockpit(context) {
+    traceRoundedPolygon(context, BOAT_COCKPIT, fieldScale, BOAT_COCKPIT_CORNER_RADIUS);
   }
 
   function drawDashedMeterLine(xMeters) {
@@ -2084,8 +3403,145 @@
     }
   }
 
+  function isBallInGoal(ballPose) {
+    if (!ballPose) return null;
+    var halfGoal = GOAL_WIDTH / 2;
+    var centerY = FIELD_WIDTH / 2;
+    if (Math.abs(ballPose.y - centerY) > halfGoal) return null;
+    var radius = BALL_DIAMETER / 2;
+    if (isHalfField()) {
+      return ballPose.x <= radius ? 'attack' : null;
+    }
+    if (ballPose.x <= radius) return 'left';
+    if (ballPose.x >= FIELD_LENGTH - radius) return 'right';
+    return null;
+  }
+
+  function goalConfettiDirection(goalSide) {
+    if (isHalfField()) return 'down';
+    if (goalSide === 'right') return 'left';
+    return 'right';
+  }
+
+  function goalConfettiOrigin(goalSide) {
+    var centerY = FIELD_WIDTH / 2;
+    var x = goalSide === 'right' ? FIELD_LENGTH : 0;
+    return metersToCanvas({ x: x, y: centerY, rotation: 0 });
+  }
+
+  function createConfettiParticle(x, y, direction) {
+    var baseAngle = direction === 'down' ? Math.PI / 2 : direction === 'right' ? 0 : Math.PI;
+    var spread = Math.PI * 0.75;
+    var angle = baseAngle + (Math.random() - 0.5) * spread;
+    var speed = 70 + Math.random() * 130;
+    return {
+      x: x + (Math.random() - 0.5) * GOAL_WIDTH * fieldScale * 0.8,
+      y: y + (Math.random() - 0.5) * 8,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      w: 3 + Math.random() * 4,
+      h: 5 + Math.random() * 5,
+      color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+      rotation: Math.random() * Math.PI * 2,
+      spin: (Math.random() - 0.5) * 10,
+      life: 1.1 + Math.random() * 0.7,
+      age: 0,
+    };
+  }
+
+  function spawnGoalConfetti(goalSide) {
+    var origin = goalConfettiOrigin(goalSide);
+    var direction = goalConfettiDirection(goalSide);
+    for (var i = 0; i < CONFETTI_COUNT; i++) {
+      state.confetti.particles.push(createConfettiParticle(origin.x, origin.y, direction));
+    }
+    state.confetti.lastUpdateAt = null;
+    ensureConfettiLoop();
+  }
+
+  function updateConfetti(dt) {
+    var gravity = 280;
+    var drag = 0.985;
+    var alive = [];
+    state.confetti.particles.forEach(function (particle) {
+      particle.age += dt;
+      if (particle.age >= particle.life) return;
+      particle.vx *= drag;
+      particle.vy = particle.vy * drag + gravity * dt;
+      particle.x += particle.vx * dt;
+      particle.y += particle.vy * dt;
+      particle.rotation += particle.spin * dt;
+      alive.push(particle);
+    });
+    state.confetti.particles = alive;
+  }
+
+  function drawConfetti() {
+    if (!state.confetti.particles.length) return;
+    state.confetti.particles.forEach(function (particle) {
+      var alpha = 1 - particle.age / particle.life;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.translate(particle.x, particle.y);
+      ctx.rotate(particle.rotation);
+      ctx.fillStyle = particle.color;
+      ctx.fillRect(-particle.w / 2, -particle.h / 2, particle.w, particle.h);
+      ctx.restore();
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  function tickConfetti(now) {
+    if (!state.confetti.particles.length) {
+      state.confetti.lastUpdateAt = null;
+      return false;
+    }
+    if (state.confetti.lastUpdateAt == null) {
+      state.confetti.lastUpdateAt = now;
+      return true;
+    }
+    var dt = Math.min(0.05, (now - state.confetti.lastUpdateAt) / 1000);
+    state.confetti.lastUpdateAt = now;
+    updateConfetti(dt);
+    return true;
+  }
+
+  function stopConfettiLoop() {
+    if (!state.confetti.raf) return;
+    cancelAnimationFrame(state.confetti.raf);
+    state.confetti.raf = null;
+    state.confetti.lastUpdateAt = null;
+  }
+
+  function ensureConfettiLoop() {
+    if (state.confetti.raf) return;
+    function frame(now) {
+      if (!tickConfetti(now)) {
+        stopConfettiLoop();
+        renderCanvas();
+        return;
+      }
+      renderCanvas();
+      state.confetti.raf = requestAnimationFrame(frame);
+    }
+    state.confetti.raf = requestAnimationFrame(frame);
+  }
+
+  function syncGoalTracking(triggerCelebration) {
+    var poses = getDisplayPoses();
+    var ballPose = poses.ball;
+    var inGoal = isBallInGoal(ballPose);
+    if (triggerCelebration && inGoal && !state.ballWasInGoal) {
+      spawnGoalConfetti(inGoal);
+    }
+    state.ballWasInGoal = !!inGoal;
+  }
+
+  function resetGoalTracking() {
+    state.ballWasInGoal = false;
+  }
+
   function drawBoat(pose, entity, selected) {
-    var length = BOAT_LENGTH * fieldScale;
     var width = BOAT_WIDTH * fieldScale;
     var colors = entity.colors && entity.colors.length ? entity.colors : [entity.color || '#94a3b8'];
     var showNumbers = getSettings().showNumbers;
@@ -2094,24 +3550,29 @@
     ctx.translate(pose.x, pose.y);
     ctx.rotate((pose.rotation * Math.PI) / 180);
 
-    var radius = width / 2;
-    roundRect(ctx, -length / 2, -width / 2, length, width, radius);
+    traceBoatHull(ctx);
     ctx.fillStyle = colors[0];
     ctx.fill();
     if (colors.length >= 2) {
       ctx.save();
-      roundRect(ctx, -length / 2, -width / 2, length, width, radius);
+      traceBoatHull(ctx);
       ctx.clip();
       ctx.fillStyle = colors[1];
-      ctx.fillRect(0, -width / 2, length / 2, width);
+      ctx.fillRect(BOAT_COLOR_SPLIT_X * fieldScale, -width * 2, width * 4, width * 4);
       ctx.restore();
     }
-    roundRect(ctx, -length / 2, -width / 2, length, width, radius);
+    traceBoatHull(ctx);
     ctx.strokeStyle = selected ? '#ffffff' : 'rgba(255,255,255,0.4)';
-    ctx.lineWidth = selected ? 2.5 : 1;
+    ctx.lineWidth = selected ? 2.5 : 1.3;
+    ctx.stroke();
+    traceBoatCockpit(ctx);
+    ctx.fillStyle = '#000000';
+    ctx.fill();
+    ctx.strokeStyle = '#9ca3af';
+    ctx.lineWidth = 1;
     ctx.stroke();
 
-    var arrowX = length * 0.28;
+    var arrowX = fieldScale * 0.95;
     var arrowSize = Math.max(4, width * 0.45);
     ctx.beginPath();
     ctx.moveTo(arrowX + arrowSize * 0.9, 0);
@@ -2124,16 +3585,20 @@
     ctx.lineWidth = 1;
     ctx.stroke();
 
+    ctx.restore();
+
     if (showNumbers) {
-      ctx.fillStyle = colors[0] === '#111111' || colors[0] === '#000000' ? '#f8fafc' : '#020617';
-      if (colors.length >= 2) ctx.fillStyle = '#020617';
+      ctx.save();
       ctx.font = 'bold ' + Math.max(10, width * 0.85) + 'px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(entity.label, -length * 0.12, 0);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#ffffff';
+      ctx.fillStyle = '#000000';
+      ctx.strokeText(entity.label, pose.x, pose.y);
+      ctx.fillText(entity.label, pose.x, pose.y);
+      ctx.restore();
     }
-
-    ctx.restore();
   }
 
   function drawBall(pose) {
@@ -2151,14 +3616,18 @@
     return Math.max(6, fieldScale * 0.28);
   }
 
-  function drawRoutePath(start, end, controls, emphasized) {
+  function drawRoutePath(start, end, controls, emphasized, style) {
     var from = metersToCanvas(start);
     var to = metersToCanvas(end);
+    style = style || {};
     ctx.save();
-    ctx.strokeStyle = emphasized ? 'rgba(226, 232, 240, 0.95)' : 'rgba(203, 213, 225, 0.75)';
+    ctx.strokeStyle = style.color || (emphasized ? 'rgba(226, 232, 240, 0.95)' : 'rgba(203, 213, 225, 0.75)');
     ctx.lineWidth = pathLineWidth();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    if (style.dash && style.dash.length) {
+      ctx.setLineDash(style.dash);
+    }
     ctx.beginPath();
     ctx.moveTo(from.x, from.y);
     if (controls && controls.controlOut && controls.controlIn) {
@@ -2170,6 +3639,70 @@
     }
     ctx.stroke();
     ctx.restore();
+  }
+
+  function drawSmallBallMarker(pose) {
+    var canvasPose = metersToCanvas(pose);
+    var radius = Math.max(4, fieldScale * 0.12);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(canvasPose.x, canvasPose.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(248, 250, 252, 0.85)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.7)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawDribbleMarkers(boatSegment) {
+    var arcData = getSegmentArcData(boatSegment);
+    var throwDistance = getDribbleThrowDistance();
+    var driveStart = getDribbleDriveStart(arcData.total, throwDistance);
+    var dist = throwDistance;
+    while (dist < driveStart - 0.05) {
+      drawSmallBallMarker(poseAtArcDistance(boatSegment, dist, arcData));
+      dist += throwDistance;
+    }
+  }
+
+  function drawBallHolderIndicator(pose) {
+    var canvasPose = metersToCanvas(pose);
+    var radius = Math.max(5, fieldScale * 0.14);
+    var offset = Math.max(8, fieldScale * 0.22);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(canvasPose.x + offset, canvasPose.y - offset, radius, 0, Math.PI * 2);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fill();
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawPassTargetHighlights() {
+    var highlightTool = state.tool && (
+      state.tool.mode === 'pass'
+      || (state.tool.mode === 'vaarlijn' && state.tool.phase === 'receiver')
+    );
+    var highlightDrag = state.drag && state.drag.mode === 'ball-route';
+    if (!highlightTool && !highlightDrag) return;
+    var poses = getPosesAtTime();
+    state.tactic.entities.forEach(function (entity) {
+      if (entity.type !== 'boat') return;
+      var pose = poses[entity.id] || entity.initial;
+      var canvasPose = metersToCanvas(pose);
+      var isTarget = (state.tool && state.tool.targetEntityId === entity.id)
+        || (state.drag && state.drag.passTarget && state.drag.passTarget.boatId === entity.id);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(canvasPose.x, canvasPose.y, Math.max(14, fieldScale * 0.45), 0, Math.PI * 2);
+      ctx.strokeStyle = isTarget ? 'rgba(34, 211, 238, 0.95)' : 'rgba(34, 211, 238, 0.35)';
+      ctx.lineWidth = isTarget ? 2.5 : 1.5;
+      ctx.stroke();
+      ctx.restore();
+    });
   }
 
   function drawControlHandle(point, active) {
@@ -2208,10 +3741,42 @@
 
   function drawEntityRoutes() {
     if (state.playbackMode) return;
+    var holderId = getBallHolderId();
+
+    if (state.drag && state.drag.mode === 'ball-route' && state.drag.previewPose) {
+      var dragPassTarget = null;
+      if (state.drag.holderId || getBallHolderId()) {
+        var passerId = resolveBallPasserId(state.drag.startPose, state.drag.holderId);
+        var previewCanvas = metersToCanvas(state.drag.previewPose);
+        dragPassTarget = resolveBallPassTargetAtCanvasPoint(
+          previewCanvas.x,
+          previewCanvas.y,
+          getHolderTeam(passerId),
+          passerId
+        );
+      }
+      var previewEnd = dragPassTarget ? dragPassTarget.targetPose : state.drag.previewPose;
+      var previewStyle = dragPassTarget
+        ? getBallRouteStyle({ passType: dragPassTarget.passType || 'direct' })
+        : getBallRouteStyle({ passType: 'free' });
+      drawRoutePath(
+        state.drag.startPose,
+        previewEnd,
+        null,
+        true,
+        previewStyle
+      );
+      if (dragPassTarget && dragPassTarget.passType === 'route') {
+        drawSmallBallMarker(dragPassTarget.targetPose);
+      }
+    }
+
     state.tactic.entities.forEach(function (entity) {
       var selected = isEntityHighlighted(entity.id);
       var draggingRoute = state.drag && state.drag.mode === 'route' && state.drag.entityId === entity.id;
       var toolingVaar = state.tool && state.tool.mode === 'vaar' && state.tool.entityId === entity.id;
+      var toolingPass = state.tool && (state.tool.mode === 'pass' || state.tool.mode === 'vaarlijn')
+        && state.tool.entityId === entity.id;
 
       if (draggingRoute && state.drag.previewPose) {
         var dragControls = entity.type === 'boat'
@@ -2239,12 +3804,35 @@
         if (!state.tool.hasSegment) return;
       }
 
+      if (toolingPass && state.tool.previewPose) {
+        var passStyle = state.tool.mode === 'pass'
+          ? getBallRouteStyle({ passType: 'direct' })
+          : getBallRouteStyle({ passType: 'space' });
+        drawRoutePath(state.tool.startPose, state.tool.previewPose, null, true, passStyle);
+        if (state.tool.mode === 'vaarlijn' && state.tool.phase === 'receiver') {
+          drawSmallBallMarker(state.tool.previewPose);
+        }
+        return;
+      }
+
       var segment = getPrimarySegment(entity.id);
       if (!segment) return;
       if (toolingVaar && state.tool.previewPose) return;
       var endPose = getGhostPose(entity.id) || segment.endPose;
       var controls = entity.type === 'boat' ? resolveRouteControls(segment) : null;
-      drawRoutePath(segment.startPose, endPose, controls, selected);
+      var routeStyle = entity.type === 'ball' ? getBallRouteStyle(segment) : null;
+      drawRoutePath(segment.startPose, endPose, controls, selected, routeStyle);
+
+      if (entity.type === 'boat' && holderId === entity.id && isDribbleActive(holderId)) {
+        drawDribbleMarkers(segment);
+      }
+
+      var ballSegment = getPrimarySegment('ball');
+      if (entity.type === 'boat' && ballSegment
+        && ballSegment.syncToEntityId === entity.id
+        && ballSegment.syncArcDistance != null) {
+        drawSmallBallMarker(poseAtArcDistance(segment, ballSegment.syncArcDistance));
+      }
     });
   }
 
@@ -2279,6 +3867,7 @@
 
   function renderCanvas() {
     updateFieldScale();
+
     var size = viewSizeMeters();
     var width = size.width * fieldScale + CANVAS_PADDING * 2;
     var height = size.height * fieldScale + CANVAS_PADDING * 2;
@@ -2325,8 +3914,10 @@
 
     drawGoal();
     drawEntityRoutes();
+    drawPassTargetHighlights();
 
     var poses = getDisplayPoses();
+    var holderId = getBallHolderId();
     state.tactic.entities.forEach(function (entity) {
       var sourcePose = poses[entity.id] || entity.initial;
       if (state.tool && state.tool.entityId === entity.id) {
@@ -2340,8 +3931,11 @@
       }
       var selected = isEntityHighlighted(entity.id);
       var pose = metersToCanvas(sourcePose);
-      if (entity.type === 'ball') drawBall(pose);
-      else drawBoat(pose, entity, selected);
+      if (entity.type === 'ball') {
+        drawBall(pose);
+      } else {
+        drawBoat(pose, entity, selected);
+      }
     });
 
     if (state.tool && state.tool.mode === 'teleport' && state.tool.previewPose) {
@@ -2355,6 +3949,12 @@
 
     drawPersistentGhosts();
     drawSelectedControlHandles();
+
+    if (state.isPlaying || state.transport.playing) {
+      syncGoalTracking(true);
+    }
+
+    drawConfetti();
   }
 
   function createSelect(label, value, options, onChange) {
@@ -2447,7 +4047,7 @@
     if (!enabled) return section;
 
     if (teamKey === 'defense') {
-      section.appendChild(createSelect('Basisopstelling', settings.defenseFormation, [
+      section.appendChild(createSelect(t('settings.formation'), settings.defenseFormation, [
         { value: '1-3-1', label: '1-3-1' },
         { value: '1-2-2', label: '1-2-2' },
       ], function (value) {
@@ -2457,8 +4057,9 @@
         renderAll();
       }));
     } else {
-      section.appendChild(createSelect('Basisopstelling', settings.attackFormation, [
-        { value: 'midline', label: 'Op lijn op de middenlijn' },
+      section.appendChild(createSelect(t('settings.formation'), settings.attackFormation, [
+        { value: 'midline', label: t('settings.formation.midline') },
+        { value: 'fan', label: t('settings.formation.fan') },
       ], function (value) {
         recordHistory();
         getSettings().attackFormation = value;
@@ -2467,7 +4068,7 @@
       }));
     }
 
-    section.appendChild(createNumber('Aantal boten', team.boatCount, 1, 10, function (value) {
+    section.appendChild(createNumber(t('settings.boatCount'), team.boatCount, 1, 10, function (value) {
       recordHistory();
       getSettings()[teamKey].boatCount = value;
       applyFormationReset(state.tactic);
@@ -2476,7 +4077,7 @@
 
     var colorLabel = document.createElement('div');
     colorLabel.className = 'field-row';
-    colorLabel.innerHTML = '<label>Kleuren (1 of 2)</label>';
+    colorLabel.innerHTML = '<label>' + t('settings.colors') + '</label>';
     section.appendChild(colorLabel);
 
     var colorRow = document.createElement('div');
@@ -2486,7 +4087,7 @@
       input.type = 'color';
       input.value = toColorInput(color);
       input.disabled = state.isViewOnly;
-      input.title = 'Kleur ' + (index + 1);
+      input.title = t('settings.color', { n: index + 1 });
       input.addEventListener('input', function () {
         recordHistory();
         getSettings()[teamKey].colors[index] = input.value;
@@ -2500,7 +4101,7 @@
       var addBtn = document.createElement('button');
       addBtn.type = 'button';
       addBtn.className = 'btn';
-      addBtn.textContent = 'Tweede kleur';
+      addBtn.textContent = t('settings.addColor');
       addBtn.disabled = state.isViewOnly;
       addBtn.addEventListener('click', function () {
         recordHistory();
@@ -2513,7 +4114,7 @@
       var removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'btn';
-      removeBtn.textContent = 'Eén kleur';
+      removeBtn.textContent = t('settings.removeColor');
       removeBtn.disabled = state.isViewOnly;
       removeBtn.addEventListener('click', function () {
         recordHistory();
@@ -2557,43 +4158,58 @@
     body.innerHTML = '';
     var settings = getSettings();
 
+    var langSection = document.createElement('section');
+    langSection.className = 'settings-section';
+    langSection.innerHTML = '<h3>' + t('settings.language') + '</h3>';
+    langSection.appendChild(createSelect(t('settings.language'), FlowboardI18n.getLocale(), [
+      { value: 'en', label: t('lang.en') },
+      { value: 'nl', label: t('lang.nl') },
+      { value: 'de', label: t('lang.de') },
+      { value: 'fr', label: t('lang.fr') },
+      { value: 'it', label: t('lang.it') },
+      { value: 'es', label: t('lang.es') },
+    ], function (value) {
+      FlowboardI18n.setLocale(value);
+    }));
+    body.appendChild(langSection);
+
     var fieldSection = document.createElement('section');
     fieldSection.className = 'settings-section';
-    fieldSection.innerHTML = '<h3>Veld</h3>';
-    fieldSection.appendChild(createSelect('Weergave', settings.fieldMode, [
-      { value: 'half', label: 'Half veld' },
-      { value: 'full', label: 'Volledig veld' },
+    fieldSection.innerHTML = '<h3>' + t('settings.field') + '</h3>';
+    fieldSection.appendChild(createSelect(t('settings.display'), settings.fieldMode, [
+      { value: 'half', label: t('settings.field.half') },
+      { value: 'full', label: t('settings.field.full') },
     ], function (value) {
       recordHistory();
       getSettings().fieldMode = value;
       state.tactic.updatedAt = new Date().toISOString();
       renderAll();
     }));
-    fieldSection.appendChild(createCheckbox('4-meterlijn', settings.showLine4m, function (checked) {
+    fieldSection.appendChild(createCheckbox(t('settings.line4m'), settings.showLine4m, function (checked) {
       recordHistory();
       getSettings().showLine4m = checked;
       state.tactic.updatedAt = new Date().toISOString();
       renderAll();
     }));
-    fieldSection.appendChild(createCheckbox('6-meterlijn', settings.showLine6m, function (checked) {
+    fieldSection.appendChild(createCheckbox(t('settings.line6m'), settings.showLine6m, function (checked) {
       recordHistory();
       getSettings().showLine6m = checked;
       state.tactic.updatedAt = new Date().toISOString();
       renderAll();
     }));
-    fieldSection.appendChild(createCheckbox('Bootnummers tonen', settings.showNumbers, function (checked) {
+    fieldSection.appendChild(createCheckbox(t('settings.showNumbers'), settings.showNumbers, function (checked) {
       recordHistory();
       getSettings().showNumbers = checked;
       state.tactic.updatedAt = new Date().toISOString();
       renderAll();
     }));
     body.appendChild(fieldSection);
-    body.appendChild(createTeamSection('Verdedigend team', 'defense'));
-    body.appendChild(createTeamSection('Aanvallend team', 'attack'));
+    body.appendChild(createTeamSection(t('settings.defenseTeam'), 'defense'));
+    body.appendChild(createTeamSection(t('settings.attackTeam'), 'attack'));
 
     var motionSection = document.createElement('section');
     motionSection.className = 'settings-section';
-    motionSection.innerHTML = '<h3>Geavanceerd</h3>';
+    motionSection.innerHTML = '<h3>' + t('settings.advanced') + '</h3>';
 
     function updateMotionSetting(key, value) {
       recordHistory();
@@ -2603,16 +4219,16 @@
       renderAll();
     }
 
-    motionSection.appendChild(createSelect('Timing', settings.motionTimingMode, [
-      { value: 'boatSpeed', label: 'Bootsnelheid' },
-      { value: 'stepDuration', label: 'Stapduur' },
+    motionSection.appendChild(createSelect(t('settings.timing'), settings.motionTimingMode, [
+      { value: 'boatSpeed', label: t('settings.boatSpeed') },
+      { value: 'stepDuration', label: t('settings.stepDuration') },
     ], function (value) {
       updateMotionSetting('motionTimingMode', value === 'stepDuration' ? 'stepDuration' : 'boatSpeed');
     }));
 
     if (settings.motionTimingMode === 'stepDuration') {
       motionSection.appendChild(createNumber(
-        'Stapduur (s)',
+        t('settings.stepDurationSec'),
         settings.stepDuration,
         0.25,
         30,
@@ -2620,7 +4236,7 @@
         0.25
       ));
       motionSection.appendChild(createNumber(
-        'Bootversnelling (km/h/s)',
+        t('settings.boatAccel'),
         settings.boatAcceleration,
         1,
         72,
@@ -2628,8 +4244,13 @@
         0.5
       ));
     } else {
+      motionSection.appendChild(createCheckbox(
+        t('settings.syncArrival'),
+        settings.boatSpeedSyncArrival !== false,
+        function (checked) { updateMotionSetting('boatSpeedSyncArrival', checked); }
+      ));
       motionSection.appendChild(createNumber(
-        'Bootsnelheid (km/h)',
+        t('settings.boatSpeedKmh'),
         settings.boatSpeed,
         1,
         40,
@@ -2637,7 +4258,7 @@
         0.5
       ));
       motionSection.appendChild(createNumber(
-        'Bootversnelling (km/h/s)',
+        t('settings.boatAccel'),
         settings.boatAcceleration,
         1,
         72,
@@ -2645,7 +4266,7 @@
         0.5
       ));
       motionSection.appendChild(createNumber(
-        'Draaisnelheid (°/s)',
+        t('settings.rotationSpeed'),
         settings.boatRotationSpeed,
         15,
         360,
@@ -2653,7 +4274,7 @@
         5
       ));
       motionSection.appendChild(createNumber(
-        'Balsnelheid (km/h)',
+        t('settings.ballSpeed'),
         settings.ballSpeed,
         1,
         80,
@@ -2691,23 +4312,35 @@
     var entity = state.tactic.entities.find(function (item) {
       return item.id === state.actionMenu.entityId;
     });
-    if (!entity || getEntityActions(entity).length < 2) {
+    var menuOptions = { atGhost: !!state.actionMenu.atGhost };
+    var actions = getEntityActions(entity, menuOptions);
+    if (!entity || actions.length === 0 || (actions.length < 2 && !state.actionMenu.atGhost)) {
       menu.classList.add('hidden');
       return;
     }
 
-    var actions = getEntityActions(entity);
+    var passBtn = menu.querySelector('[data-action="pass"]');
+    if (passBtn) passBtn.classList.toggle('hidden', actions.indexOf('pass') === -1);
+
+    var vaarlijnBtn = menu.querySelector('[data-action="vaarlijn"]');
+    if (vaarlijnBtn) vaarlijnBtn.classList.toggle('hidden', actions.indexOf('vaarlijn') === -1);
+
     var draaiBtn = menu.querySelector('[data-action="draai"]');
     if (draaiBtn) draaiBtn.classList.toggle('hidden', actions.indexOf('draai') === -1);
 
     var vaarBtn = menu.querySelector('[data-action="vaar"]');
     if (vaarBtn) {
       vaarBtn.classList.toggle('hidden', actions.indexOf('vaar') === -1);
-      vaarBtn.textContent = entity.type === 'ball' ? 'Gooi' : 'Vaar';
+      vaarBtn.textContent = entity.type === 'ball' ? t('boatMenu.gooi') : t('boatMenu.vaar');
     }
 
+    var cancelBtn = menu.querySelector('[data-action="cancel"]');
+    if (cancelBtn) cancelBtn.classList.toggle('hidden', actions.indexOf('cancel') === -1);
+
     var poses = getPosesAtTime();
-    var sourcePose = poses[entity.id] || entity.initial;
+    var sourcePose = state.actionMenu.atGhost
+      ? (getGhostPose(entity.id) || poses[entity.id] || entity.initial)
+      : (poses[entity.id] || entity.initial);
     var canvasPose = metersToCanvas(sourcePose);
     var canvasRect = canvas.getBoundingClientRect();
     var wrap = canvas.parentElement;
@@ -2746,6 +4379,10 @@
     var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
     if (!entity) return;
     if (mode === 'draai' && entity.type !== 'boat') return;
+    if (mode === 'cancel') {
+      clearEntityRoute(entityId);
+      return;
+    }
     closeActionMenu();
     collapseStepsSheet();
 
@@ -2761,6 +4398,28 @@
         previewPose: null,
         keptRotation: segment && entity.type === 'boat' ? segment.endPose.rotation : null,
         hasSegment: !!segment,
+      };
+    } else if (mode === 'pass') {
+      if (entity.type !== 'ball') return;
+      state.tool = {
+        mode: 'pass',
+        entityId: entityId,
+        startPose: getBallStartPose(),
+        previewPose: null,
+        targetEntityId: null,
+      };
+      setMessage(t('message.passNoRoute'));
+    } else if (mode === 'vaarlijn') {
+      if (entity.type !== 'ball') return;
+      state.tool = {
+        mode: 'vaarlijn',
+        entityId: entityId,
+        phase: 'point',
+        startPose: getBallStartPose(),
+        previewPose: null,
+        endPose: null,
+        syncToEntityId: null,
+        targetEntityId: null,
       };
     } else if (mode === 'draai') {
       state.tool = {
@@ -2793,6 +4452,37 @@
     if (tool.mode === 'vaar') {
       var vaarMeters = canvasToMeters(point.x, point.y, tool.startPose.rotation);
       tool.previewPose = previewEndPose(entity, tool.startPose, vaarMeters, tool.keptRotation);
+      renderCanvas();
+      return;
+    }
+
+    if (tool.mode === 'pass') {
+      var passBoatId = getBoatAtCanvasPoint(point.x, point.y);
+      if (passBoatId) {
+        var passTarget = getBoatTargetPose(passBoatId);
+        tool.previewPose = { x: passTarget.x, y: passTarget.y, rotation: 0 };
+        tool.targetEntityId = passBoatId;
+      } else {
+        tool.previewPose = null;
+        tool.targetEntityId = null;
+      }
+      renderCanvas();
+      return;
+    }
+
+    if (tool.mode === 'vaarlijn') {
+      var vaarlijnMeters = canvasToMeters(point.x, point.y, 0);
+      var clampedPoint = clampPoseToField({
+        x: vaarlijnMeters.x,
+        y: vaarlijnMeters.y,
+        rotation: 0,
+      });
+      if (tool.phase === 'point') {
+        tool.previewPose = clampedPoint;
+      } else {
+        tool.targetEntityId = getBoatAtCanvasPoint(point.x, point.y);
+        if (tool.endPose) tool.previewPose = clone(tool.endPose);
+      }
       renderCanvas();
       return;
     }
@@ -2838,6 +4528,19 @@
         renderAll();
         return;
       }
+      if (entity.type === 'ball') {
+        var ballStart = tool.startPose;
+        clearTool();
+        closeActionMenu();
+        if (tool.hasSegment) {
+          recordHistory();
+          updateBallSegmentEndPose(endPose);
+        } else {
+          createBallRouteSegment(ballStart, endPose, { passType: 'free' });
+        }
+        renderAll();
+        return;
+      }
       if (tool.hasSegment) {
         recordHistory();
         updateSegmentEndPose(tool.entityId, endPose);
@@ -2856,6 +4559,63 @@
       return;
     }
 
+    if (tool.mode === 'pass') {
+      var passBoatId = getBoatAtCanvasPoint(point.x, point.y);
+      if (!passBoatId) {
+        setMessage(t('message.passNoRoute'));
+        renderAll();
+        return;
+      }
+      var passTargetPose = getBoatTargetPose(passBoatId);
+      var passStart = tool.startPose;
+      clearTool();
+      closeActionMenu();
+      createBallRouteSegment(passStart, passTargetPose, {
+        passType: 'direct',
+        targetEntityId: passBoatId,
+        syncToEntityId: passBoatId,
+      });
+      if (!getPrimarySegment(passBoatId)) {
+        setMessage(t('message.syncNoBoatRoute'));
+      }
+      return;
+    }
+
+    if (tool.mode === 'vaarlijn') {
+      if (tool.phase === 'point') {
+        var vaarlijnEnd = tool.previewPose;
+        if (!vaarlijnEnd || distanceMeters(tool.startPose, vaarlijnEnd) < 0.35) {
+          clearTool();
+          closeActionMenu();
+          renderAll();
+          return;
+        }
+        tool.endPose = clone(vaarlijnEnd);
+        tool.previewPose = clone(vaarlijnEnd);
+        tool.phase = 'receiver';
+        tool.targetEntityId = null;
+        tool.syncToEntityId = null;
+        setMessage(t('message.vaarlijnSelectReceiver'));
+        renderAll();
+        return;
+      }
+
+      var syncBoatId = getBoatAtCanvasPoint(point.x, point.y);
+      var vaarlijnStart = tool.startPose;
+      var vaarlijnTarget = tool.endPose;
+      clearTool();
+      closeActionMenu();
+      createBallRouteSegment(vaarlijnStart, vaarlijnTarget, {
+        passType: 'space',
+        targetEntityId: syncBoatId,
+        syncToEntityId: syncBoatId,
+      });
+      if (syncBoatId && !getPrimarySegment(syncBoatId)) {
+        setMessage(t('message.syncNoBoatRoute'));
+      }
+      return;
+    }
+
     if (tool.mode === 'draai') {
       var rotation = tool.previewRotation;
       if (rotation == null) rotation = entity.initial.rotation;
@@ -2864,7 +4624,7 @@
       var segment = getPrimarySegment(tool.entityId);
       if (segment) {
         segment.startPose.rotation = rotation;
-        segment.endTime = segment.startTime + segmentDuration(segment.startPose, segment.endPose, entity);
+        recomputeAllSegmentDurations();
       }
       syncCurrentStepPoses();
       state.tactic.updatedAt = new Date().toISOString();
@@ -2933,6 +4693,27 @@
     return null;
   }
 
+  function getBoatAtCanvasPoint(x, y) {
+    var poses = getPosesAtTime();
+    for (var i = state.tactic.entities.length - 1; i >= 0; i--) {
+      var entity = state.tactic.entities[i];
+      if (entity.type !== 'boat') continue;
+      var pose = poses[entity.id] || entity.initial;
+      if (hitTestPose(entity, pose, x, y)) return entity.id;
+    }
+    return null;
+  }
+
+  function updateBallSegmentEndPose(endPose) {
+    var segment = getPrimarySegment('ball');
+    if (!segment) return;
+    endPose = clampPoseToField(endPose);
+    if (distanceMeters(segment.startPose, endPose) < 0.35) return;
+    segment.endPose = { x: endPose.x, y: endPose.y, rotation: 0 };
+    if (segment.passType === 'free') setBallHolderId(null);
+    recomputeAllSegmentDurations();
+    state.tactic.updatedAt = new Date().toISOString();
+  }
   function getControlHandleAtCanvasPoint(x, y) {
     var hitRadius = Math.max(isPhoneLayout() ? 18 : 10, fieldScale * 0.3);
     for (var i = state.tactic.entities.length - 1; i >= 0; i--) {
@@ -2987,7 +4768,7 @@
     segment.endPose.x = endPose.x;
     segment.endPose.y = endPose.y;
     segment.endPose.rotation = keptRotation;
-    segment.endTime = segment.startTime + segmentDuration(segment.startPose, segment.endPose, entity);
+    recomputeAllSegmentDurations();
     state.tactic.updatedAt = new Date().toISOString();
   }
 
@@ -3026,11 +4807,10 @@
       y: endPose.y,
       rotation: endRotation,
     };
-    var duration = segmentDuration(startPose, endPoseFull, entity);
     var track = getTrackForEntity(entityId);
     track.segments = [{
       startTime: 0,
-      endTime: duration,
+      endTime: 0,
       startPose: {
         x: startPose.x,
         y: startPose.y,
@@ -3040,6 +4820,11 @@
       controlOut: controls ? controls.controlOut : null,
       controlIn: controls ? controls.controlIn : null,
     }];
+    recomputeAllSegmentDurations();
+
+    if (entity.type === 'boat') {
+      updateBallClaimOnRoute(entityId, endPoseFull);
+    }
 
     state.tactic.updatedAt = new Date().toISOString();
     renderAll();
@@ -3069,7 +4854,7 @@
       controls.controlIn,
       segment.startPose.rotation
     );
-    segment.endTime = segment.startTime + segmentDuration(segment.startPose, segment.endPose, entity);
+    recomputeAllSegmentDurations();
     state.tactic.updatedAt = new Date().toISOString();
   }
 
@@ -3095,7 +4880,7 @@
       controls.controlIn,
       segment.startPose.rotation
     );
-    segment.endTime = segment.startTime + segmentDuration(segment.startPose, segment.endPose, entity);
+    recomputeAllSegmentDurations();
     state.tactic.updatedAt = new Date().toISOString();
     renderAll();
   }
@@ -3107,6 +4892,7 @@
       rotation: startPose.rotation,
     });
     if (entity && entity.type === 'boat') {
+      end = snapEndPoseToBall(end);
       if (keptRotation != null) {
         end.rotation = keptRotation;
       } else {
@@ -3191,10 +4977,29 @@
           keptRotation: pending.keptRotation,
         };
       } else if (pending.kind === 'route') {
+        var routeEntity = state.tactic.entities.find(function (item) {
+          return item.id === pending.entityId;
+        });
+        if (routeEntity && routeEntity.type === 'ball') {
+          state.drag = {
+            mode: 'ball-route',
+            startPose: clone(pending.startPose),
+            holderId: getBallHolderId(),
+            previewPose: null,
+          };
+        } else {
+          state.drag = {
+            mode: 'route',
+            entityId: pending.entityId,
+            startPose: clone(pending.startPose),
+          };
+        }
+      } else if (pending.kind === 'ball-route') {
         state.drag = {
-          mode: 'route',
-          entityId: pending.entityId,
+          mode: 'ball-route',
           startPose: clone(pending.startPose),
+          holderId: pending.holderId,
+          previewPose: null,
         };
       } else {
         return false;
@@ -3213,11 +5018,11 @@
       if (state.drag.mode === 'freestyle') {
         if (!entity) return;
         var freestyleMeters = canvasToMeters(point.x, point.y, state.drag.rotation);
-        var freestylePose = clampPoseToField({
+        var freestylePose = snapEndPoseToBall(clampPoseToField({
           x: freestyleMeters.x + state.drag.offsetX,
           y: freestyleMeters.y + state.drag.offsetY,
           rotation: state.drag.rotation,
-        });
+        }));
         entity.initial.x = freestylePose.x;
         entity.initial.y = freestylePose.y;
         entity.initial.rotation = freestylePose.rotation;
@@ -3248,6 +5053,27 @@
         updateSegmentEndPose(state.drag.entityId, state.drag.previewPose);
         renderCanvas();
         renderBoatActionMenu();
+        return;
+      }
+
+      if (state.drag.mode === 'ball-route') {
+        var freePose = clampPoseToField({
+          x: meters.x,
+          y: meters.y,
+          rotation: 0,
+        });
+        var passerId = resolveBallPasserId(state.drag.startPose, state.drag.holderId);
+        var passTarget = passerId
+          ? resolveBallPassTargetAtCanvasPoint(
+            point.x,
+            point.y,
+            getHolderTeam(passerId),
+            passerId
+          )
+          : null;
+        state.drag.previewPose = passTarget ? clone(passTarget.targetPose) : freePose;
+        state.drag.passTarget = passTarget;
+        renderCanvas();
         return;
       }
 
@@ -3311,6 +5137,24 @@
           return;
         }
 
+        var ballPick = getBallPickAtCanvasPoint(x, y);
+        if (ballPick) {
+          clearTool();
+          closeActionMenu();
+          collapseStepsSheet();
+          state.pendingPointer = {
+            kind: 'ball-route',
+            startPose: clone(ballPick.startPose),
+            holderId: ballPick.holderId,
+            x: x,
+            y: y,
+            pointerId: event.pointerId,
+          };
+          canvas.setPointerCapture(event.pointerId);
+          renderCanvas();
+          return;
+        }
+
         var ghostEntityId = getGhostAtCanvasPoint(x, y);
         if (ghostEntityId) {
           var ghostSegment = getPrimarySegment(ghostEntityId);
@@ -3370,6 +5214,21 @@
         canvas.setPointerCapture(event.pointerId);
         renderCanvas();
         renderBoatActionMenu();
+        return;
+      }
+
+      var clickedEntity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+      if (clickedEntity && clickedEntity.type === 'ball') {
+        state.pendingPointer = {
+          kind: 'ball-route',
+          startPose: clone(getBallStartPose()),
+          holderId: getBallHolderId(),
+          x: x,
+          y: y,
+          pointerId: event.pointerId,
+        };
+        canvas.setPointerCapture(event.pointerId);
+        renderCanvas();
         return;
       }
 
@@ -3440,6 +5299,14 @@
           beginStartPoseRotate(pending.entityId);
           return;
         }
+        if (pending.kind === 'ball-route') {
+          openEntityActions('ball');
+          return;
+        }
+        if (pending.kind === 'ghost') {
+          openEntityActions(pending.entityId, { atGhost: true });
+          return;
+        }
         openEntityActions(pending.entityId);
         return;
       }
@@ -3481,6 +5348,7 @@
           entity.initial.y = freestylePose.y;
           entity.initial.rotation = freestylePose.rotation;
           syncCurrentStepPoses();
+          claimBallPossessionImmediate(drag.entityId, freestylePose);
           state.tactic.updatedAt = new Date().toISOString();
         }
         state.drag = null;
@@ -3505,6 +5373,15 @@
           drag.keptRotation
         );
         updateSegmentEndPose(drag.entityId, ghostEnd);
+        updateBallClaimOnRoute(drag.entityId, ghostEnd);
+        state.drag = null;
+        releaseCapture(event);
+        renderAll();
+        return;
+      }
+
+      if (drag.mode === 'ball-route') {
+        finishBallRouteDrag(drag, point);
         state.drag = null;
         releaseCapture(event);
         renderAll();
@@ -3525,12 +5402,21 @@
       if (!canEdit()) return;
       var point = pointerToCanvas(event);
       var bendEntityId = getControlHandleAtCanvasPoint(point.x, point.y);
-      if (!bendEntityId) return;
+      if (bendEntityId) {
+        event.preventDefault();
+        state.drag = null;
+        state.pendingPointer = null;
+        canvas.classList.remove('dragging');
+        resetSegmentBend(bendEntityId);
+        return;
+      }
+      var ghostEntityId = getGhostAtCanvasPoint(point.x, point.y);
+      if (!ghostEntityId || !getPrimarySegment(ghostEntityId)) return;
       event.preventDefault();
       state.drag = null;
       state.pendingPointer = null;
       canvas.classList.remove('dragging');
-      resetSegmentBend(bendEntityId);
+      clearEntityRoute(ghostEntityId);
     });
   }
 
@@ -3605,9 +5491,40 @@
     document.getElementById('btn-redo').addEventListener('click', redo);
     document.getElementById('btn-set-start').addEventListener('click', toggleStartPoseEdit);
     document.getElementById('btn-goto-start').addEventListener('click', gotoStartPosition);
+    document.getElementById('btn-export-tactic').addEventListener('click', exportTactic);
+    document.getElementById('btn-export-cancel').addEventListener('click', closeExportDialog);
+    document.getElementById('btn-export-confirm').addEventListener('click', confirmExportTactic);
+    document.getElementById('export-name-input').addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        confirmExportTactic();
+      }
+    });
+    document.getElementById('export-backdrop').addEventListener('click', function (event) {
+      if (event.target.id === 'export-backdrop') closeExportDialog();
+    });
+    document.getElementById('btn-import-tactic').addEventListener('click', function () {
+      var input = document.getElementById('import-tactic-input');
+      if (input) input.click();
+    });
     document.getElementById('btn-reset-all').addEventListener('click', resetAll);
+    (function setupImportInput() {
+      var input = document.getElementById('import-tactic-input');
+      if (!input) return;
+      input.addEventListener('change', function () {
+        if (input.files && input.files[0]) importTacticFromFile(input.files[0]);
+        input.value = '';
+      });
+    })();
     document.getElementById('btn-go').addEventListener('click', runGoPlayback);
-    document.getElementById('btn-playback-mode').addEventListener('click', togglePlaybackMode);
+    document.getElementById('btn-mode-edit').addEventListener('click', function () {
+      if (!state.playbackMode) return;
+      exitPlaybackMode();
+    });
+    document.getElementById('btn-mode-play').addEventListener('click', function () {
+      if (state.playbackMode) return;
+      enterPlaybackMode();
+    });
     document.getElementById('btn-transport-play').addEventListener('click', toggleTransportPlay);
     document.getElementById('btn-speed-down').addEventListener('click', function () {
       changeTransportSpeed(-1);
@@ -3642,6 +5559,10 @@
       }
     });
     window.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && isExportDialogOpen()) {
+        closeExportDialog();
+        return;
+      }
       if (event.key === 'Escape' && state.settingsOpen) {
         state.settingsOpen = false;
         renderSettings();
@@ -3650,6 +5571,15 @@
       if (event.key === 'Escape' && state.playbackMode) {
         event.preventDefault();
         exitPlaybackMode();
+        return;
+      }
+      if (event.key === 'Escape' && state.tool && state.tool.mode === 'vaarlijn' && state.tool.phase === 'receiver') {
+        event.preventDefault();
+        state.tool.phase = 'point';
+        state.tool.endPose = null;
+        state.tool.targetEntityId = null;
+        setMessage(null);
+        renderAll();
         return;
       }
       if (event.key === 'Escape' && state.tool) {
@@ -3661,7 +5591,7 @@
       if (event.key === 'Escape' && state.startPoseEdit) {
         event.preventDefault();
         exitStartPoseEdit();
-        setMessage('Startpositie-modus afgesloten.');
+        setMessage(t('message.startEditClosed'));
         renderAll();
         return;
       }
@@ -3708,6 +5638,15 @@
   }
 
   function init() {
+    FlowboardI18n.onLocaleChange = function () {
+      if (state.tactic && state.tactic.entities) {
+        state.tactic.entities.forEach(function (entity) {
+          if (entity.type === 'ball') entity.label = t('entity.ball');
+        });
+      }
+      syncDefaultStepNames();
+      renderAll();
+    };
     if (window.location.hash) {
       history.replaceState(null, '', window.location.pathname + window.location.search);
     }

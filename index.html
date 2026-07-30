@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -15,87 +15,127 @@
 <body>
   <div class="app">
     <header class="header">
-      <h1>Flowboard</h1>
+      <h1 data-i18n="app.title">Flowboard</h1>
       <div class="header-actions">
-        <button type="button" class="btn" id="btn-playback-mode" disabled title="Speel opgeslagen stappen af">
-          Afspelen
-        </button>
-        <button type="button" class="btn" id="btn-settings">Settings</button>
+        <div id="transport-bar" class="transport-bar hidden" data-i18n-aria="transport.aria">
+          <button type="button" class="btn btn-icon btn-transport" id="btn-transport-play" data-i18n-title="transport.play" data-i18n-aria="transport.play" disabled>
+            <svg id="transport-icon-play" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M8 5v14l11-7z"/>
+            </svg>
+            <svg id="transport-icon-pause" class="hidden" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/>
+            </svg>
+          </button>
+          <div class="transport-scrub">
+            <input type="range" id="transport-scrubber" min="0" max="1000" value="0" step="1" disabled data-i18n-aria="transport.progress" />
+          </div>
+          <span id="transport-time" class="transport-time">0:00 / 0:00</span>
+          <div class="transport-speed" data-i18n-aria="transport.speed.aria">
+            <button type="button" class="btn btn-icon btn-speed" id="btn-speed-down" data-i18n-title="transport.slower" data-i18n-aria="transport.slower" disabled>−</button>
+            <span id="transport-speed-label" class="transport-speed-label">1×</span>
+            <button type="button" class="btn btn-icon btn-speed" id="btn-speed-up" data-i18n-title="transport.faster" data-i18n-aria="transport.faster" disabled>+</button>
+          </div>
+        </div>
+        <div class="header-controls-anchor">
+          <div class="mode-toggle" id="mode-toggle" role="group" data-i18n-aria="header.modeToggle.aria">
+            <button
+              type="button"
+              class="mode-toggle-btn"
+              id="btn-mode-play"
+              aria-pressed="false"
+              data-i18n-title="header.playback.titleOpen"
+              data-i18n-aria="header.playback"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                <path fill="currentColor" d="M8 5v14l11-7z"/>
+              </svg>
+              <span data-i18n="header.playback">Play</span>
+            </button>
+            <button
+              type="button"
+              class="mode-toggle-btn is-active"
+              id="btn-mode-edit"
+              aria-pressed="true"
+              data-i18n-title="header.edit.title"
+              data-i18n-aria="header.edit"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                <path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+              </svg>
+              <span data-i18n="header.edit">Edit</span>
+            </button>
+          </div>
+          <button type="button" class="btn" id="btn-settings" data-i18n="header.settings">Settings</button>
+        </div>
       </div>
     </header>
 
     <div class="field-stage">
       <div class="canvas-wrap">
         <canvas id="field-canvas" width="800" height="600"></canvas>
-        <div id="boat-action-menu" class="boat-action-menu hidden" role="menu" aria-label="Bootacties">
-          <button type="button" class="btn btn-menu" data-action="vaar" role="menuitem">Vaar</button>
-          <button type="button" class="btn btn-menu" data-action="draai" role="menuitem">Draai</button>
+        <div id="boat-action-menu" class="boat-action-menu hidden" role="menu" data-i18n-aria="boatMenu.aria">
+          <button type="button" class="btn btn-menu" data-action="pass" role="menuitem" data-i18n="boatMenu.pass">Pass</button>
+          <button type="button" class="btn btn-menu" data-action="vaarlijn" role="menuitem" data-i18n="boatMenu.vaarlijn">Through ball</button>
+          <button type="button" class="btn btn-menu" data-action="vaar" role="menuitem" data-i18n="boatMenu.vaar">Paddle</button>
+          <button type="button" class="btn btn-menu" data-action="draai" role="menuitem" data-i18n="boatMenu.draai">Turn</button>
+          <button type="button" class="btn btn-menu" data-action="cancel" role="menuitem" data-i18n="boatMenu.cancel">Cancel</button>
         </div>
       </div>
-      <aside id="steps-panel" class="steps-panel is-peek" aria-label="Stappen en veldacties">
+      <aside id="steps-panel" class="steps-panel is-peek" data-i18n-aria="steps.panel.aria">
         <button
           type="button"
           class="sheet-handle"
           id="btn-steps-toggle"
           aria-expanded="false"
           aria-controls="steps-panel"
-          title="Stappenpaneel openen of sluiten"
+          data-i18n-title="steps.toggle.title"
         >
           <span class="sheet-handle-bar" aria-hidden="true"></span>
-          <span class="sheet-handle-label">Stappen</span>
+          <span class="sheet-handle-label" data-i18n="steps.label">Steps</span>
         </button>
         <div class="toolbar-row sheet-toolbar">
-          <button type="button" class="btn btn-icon" id="btn-undo" title="Ongedaan maken" aria-label="Ongedaan maken" disabled>
+          <button type="button" class="btn btn-icon" id="btn-undo" data-i18n-title="steps.undo" data-i18n-aria="steps.undo" disabled>
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
               <path fill="currentColor" d="M12.5 8c-2.65 0-5.05 1-6.9 2.6L2 7v9h9l-3.62-3.62A7.96 7.96 0 0 1 12.5 10c3.53 0 6.52 2.29 7.6 5.5l2.37-.78C20.98 10.77 17.08 8 12.5 8z"/>
             </svg>
           </button>
-          <button type="button" class="btn btn-icon" id="btn-redo" title="Opnieuw" aria-label="Opnieuw" disabled>
+          <button type="button" class="btn btn-icon" id="btn-redo" data-i18n-title="steps.redo" data-i18n-aria="steps.redo" disabled>
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
               <path fill="currentColor" d="M18.4 10.6A7.96 7.96 0 0 0 11.5 8C6.92 8 3.02 10.77 1.53 14.72l2.37.78A6.01 6.01 0 0 1 11.5 10c1.89 0 3.63.69 4.99 1.82L12.9 16H22V7l-3.6 3.6z"/>
             </svg>
           </button>
         </div>
-        <p id="sheet-peek-summary" class="sheet-peek-summary" aria-live="polite">Stap 1</p>
-        <button type="button" class="btn btn-primary btn-go" id="btn-go" disabled>
+        <p id="sheet-peek-summary" class="sheet-peek-summary" aria-live="polite">Start</p>
+        <button type="button" class="btn btn-primary btn-go" id="btn-go" disabled data-i18n="steps.go">
           Go
         </button>
         <div id="start-actions" class="start-actions sheet-expand-only hidden">
-          <button type="button" class="btn btn-toolbar" id="btn-set-start" title="Modus om startposities vrij te zetten">
-            <span class="btn-toolbar-label">Zet startpositie</span>
-            <span id="start-indicator" class="start-indicator" title="Geen startpositie gezet" aria-hidden="true"></span>
+          <button type="button" class="btn btn-toolbar" id="btn-set-start" data-i18n-title="steps.setStart.title">
+            <span class="btn-toolbar-label" data-i18n="steps.setStart">Set start position</span>
+            <span id="start-indicator" class="start-indicator" data-i18n-title="steps.startNotSet" aria-hidden="true"></span>
           </button>
         </div>
-        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-goto-start" title="Alle boten terugzetten naar het begin van de huidige stap" disabled>
-          Terug naar startpositie
+        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-goto-start" data-i18n-title="steps.gotoStart.title" data-i18n="steps.gotoStart" disabled>
+          Back to start position
         </button>
-        <h2 class="steps-panel-title sheet-expand-only">Stappen</h2>
+        <h2 class="steps-panel-title sheet-expand-only" data-i18n="steps.label">Steps</h2>
         <ol id="steps-list" class="steps-list sheet-expand-only"></ol>
-        <p id="steps-hint" class="steps-hint muted sheet-expand-only">Sleep boten om ghosts te zetten, daarna Go.</p>
-        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-reset-all">
+        <p id="steps-hint" class="steps-hint muted sheet-expand-only" data-i18n="steps.hint.default">Drag boats to set ghosts, then Go.</p>
+        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-export-tactic" data-i18n="settings.export">
+          Export
+        </button>
+        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-import-tactic" data-i18n="settings.import">
+          Import
+        </button>
+        <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-reset-all" data-i18n="steps.reset">
           Reset
         </button>
       </aside>
-      <div id="transport-bar" class="transport-bar hidden" aria-label="Afspeelbalk">
-        <button type="button" class="btn btn-icon" id="btn-transport-play" title="Afspelen" aria-label="Afspelen" disabled>
-          <svg id="transport-icon-play" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-            <path fill="currentColor" d="M8 5v14l11-7z"/>
-          </svg>
-          <svg id="transport-icon-pause" class="hidden" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-            <path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/>
-          </svg>
-        </button>
-        <div class="transport-scrub">
-          <input type="range" id="transport-scrubber" min="0" max="1000" value="0" step="1" disabled aria-label="Voortgang" />
-        </div>
-        <span id="transport-time" class="transport-time">0:00 / 0:00</span>
-        <div class="transport-speed" aria-label="Afspeelsnelheid">
-          <button type="button" class="btn btn-icon btn-speed" id="btn-speed-down" title="Langzamer" aria-label="Langzamer" disabled>−</button>
-          <span id="transport-speed-label" class="transport-speed-label">1×</span>
-          <button type="button" class="btn btn-icon btn-speed" id="btn-speed-up" title="Sneller" aria-label="Sneller" disabled>+</button>
-        </div>
-      </div>
     </div>
+
+    <footer class="app-footer">
+      <p data-i18n="footer.disclaimer">Door gebruik van deze website ga je akkoord dat Keistad F de allerbeste is</p>
+    </footer>
   </div>
 
   <div id="message" class="message hidden" role="status" aria-live="polite"></div>
@@ -103,17 +143,42 @@
   <div id="settings-backdrop" class="settings-backdrop hidden">
     <div class="settings-panel panel" role="dialog" aria-labelledby="settings-title">
       <div class="settings-head">
-        <h2 id="settings-title">Settings</h2>
-        <button type="button" class="btn" id="btn-close-settings">Sluiten</button>
+        <h2 id="settings-title" data-i18n="header.settings">Settings</h2>
+        <button type="button" class="btn" id="btn-close-settings" data-i18n="settings.close">Close</button>
       </div>
       <div id="settings-body" class="settings-body"></div>
     </div>
   </div>
 
+  <div id="export-backdrop" class="settings-backdrop hidden">
+    <div class="settings-panel panel export-panel" role="dialog" aria-labelledby="export-title">
+      <div class="settings-head">
+        <h2 id="export-title" data-i18n="export.title">Export play</h2>
+      </div>
+      <div class="export-name-field">
+        <label for="export-name-input" data-i18n="export.nameLabel">Name</label>
+        <input type="text" id="export-name-input" class="export-name-input" maxlength="120" data-i18n-aria="export.nameLabel" />
+      </div>
+      <div class="export-actions">
+        <button type="button" class="btn" id="btn-export-cancel" data-i18n="export.cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-export-confirm" data-i18n="export.confirm">Export</button>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="import-tactic-input" class="hidden" accept=".json,application/json" aria-hidden="true" tabindex="-1">
+
   <script>
-    var js = document.createElement('script');
-    js.src = 'app.js?v=' + window.__FLOWBOARD_CACHE_BUST;
-    document.body.appendChild(js);
+    var bust = window.__FLOWBOARD_CACHE_BUST;
+    var i18n = document.createElement('script');
+    i18n.src = 'i18n.js?v=' + bust;
+    i18n.onload = function () {
+      FlowboardI18n.init();
+      var js = document.createElement('script');
+      js.src = 'app.js?v=' + bust;
+      document.body.appendChild(js);
+    };
+    document.body.appendChild(i18n);
   </script>
 </body>
 </html>
