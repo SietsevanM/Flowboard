@@ -1560,7 +1560,7 @@
     if ((segment.endTime || 0) > (segment.startTime || 0)) {
       return segment.endTime - (segment.startTime || 0);
     }
-    return entityMoveDuration(segment.startPose, segment.endPose, entity);
+    return entityMoveDuration(segment.startPose, segment.endPose, entity, segment);
   }
 
   function maxDurationOfRoutes(routes) {
@@ -3144,6 +3144,35 @@
     return Math.max(0.05, high);
   }
 
+  // Zoek cruise-snelheid zodat travelTime(distance, speed, accel) ≈ desiredTime.
+  function cruiseSpeedForTravelTime(distance, desiredTime, accel) {
+    var a = Math.max(0.1, accel);
+    var d = Math.max(0, distance);
+    var t = Math.max(0.01, desiredTime);
+    if (d < 1e-8) return 0.1;
+
+    var minTriangleTime = 2 * Math.sqrt(d / a);
+    if (t <= minTriangleTime + 1e-6) {
+      return Math.max(0.1, (a * t) / 2);
+    }
+
+    var low = 0.05;
+    var high = Math.max(1, (2 * d) / t);
+    var expand;
+    for (expand = 0; expand < 16; expand++) {
+      if (travelTime(d, high, a) <= t) break;
+      high *= 2;
+    }
+
+    var i;
+    for (i = 0; i < 32; i++) {
+      var mid = (low + high) / 2;
+      if (travelTime(d, mid, a) > t) low = mid;
+      else high = mid;
+    }
+    return Math.max(0.05, high);
+  }
+
   function timeToCoverDistanceNoDecel(pathDistance, coverDistance, speed, accel) {
     var path = Math.max(0, pathDistance);
     var cover = clamp(coverDistance, 0, path);
@@ -3665,14 +3694,20 @@
     return isStepDurationTiming() || isBoatSpeedSyncArrival();
   }
 
-  function entityMoveDuration(start, end, entity) {
+  function entityMoveDuration(start, end, entity, segment) {
     var settings = getSettings();
-    var distance = distanceMeters(start, end);
+    var distance = segment
+      ? getSegmentArcData(segment).total
+      : distanceMeters(start, end);
     var speedKmh = entity && entity.type === 'ball' ? settings.ballSpeed : settings.boatSpeed;
-    var moveTime = distance / Math.max(0.1, kmhToMs(speedKmh));
     if (entity && entity.type === 'ball') {
-      return Math.max(0.25, moveTime);
+      return Math.max(0.25, distance / Math.max(0.1, kmhToMs(speedKmh)));
     }
+    var moveTime = travelTime(
+      distance,
+      Math.max(0.1, kmhToMs(speedKmh)),
+      Math.max(0.1, kmhToMs(settings.boatAcceleration))
+    );
     var turnTime = angleDeltaDegrees(start.rotation || 0, end.rotation || 0)
       / Math.max(1, settings.boatRotationSpeed);
     return Math.max(0.25, Math.max(moveTime, turnTime));
@@ -3686,20 +3721,20 @@
       if (!segment) return;
       var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
       if (!entity || entity.type !== 'boat') return;
-      var duration = entityMoveDuration(segment.startPose, segment.endPose, entity);
+      var duration = entityMoveDuration(segment.startPose, segment.endPose, entity, segment);
       if (duration > max) max = duration;
     });
     return max;
   }
 
-  function segmentDuration(start, end, entity, syncedBoatDuration) {
+  function segmentDuration(segment, entity, syncedBoatDuration) {
     if (isStepDurationTiming()) {
       return Math.max(0.25, getSettings().stepDuration);
     }
     if (isBoatSpeedSyncArrival() && entity && entity.type === 'boat' && syncedBoatDuration > 0) {
       return Math.max(0.25, syncedBoatDuration);
     }
-    return entityMoveDuration(start, end, entity);
+    return entityMoveDuration(segment.startPose, segment.endPose, entity, segment);
   }
 
   function applyRouteDurations(routes) {
@@ -3712,8 +3747,7 @@
       clearBoatCatchPace(segment);
       segment.startTime = segment.startTime || 0;
       segment.endTime = segment.startTime + segmentDuration(
-        segment.startPose,
-        segment.endPose,
+        segment,
         entity,
         syncedBoatDuration
       );
@@ -3724,7 +3758,8 @@
       var travelDuration = Math.max(0.25, entityMoveDuration(
         ballSeg.startPose,
         ballSeg.endPose,
-        ballEntity
+        ballEntity,
+        ballSeg
       ));
       ballSeg.travelDuration = travelDuration;
       ballSeg.throwDelay = 0;
@@ -3773,7 +3808,8 @@
       travelDuration = Math.max(0.25, entityMoveDuration(
         segment.startPose,
         segment.endPose,
-        ballEntity
+        ballEntity,
+        segment
       ));
     }
     var throwDelay = segment.throwDelay || 0;
@@ -3801,25 +3837,23 @@
     }
 
     var settings = getSettings();
-    var distance = distanceMeters(segment.startPose, segment.endPose);
+    var arcData = getSegmentArcData(segment);
+    var distance = arcData.total;
+    var accel = kmhToMs(settings.boatAcceleration);
     var cruiseSpeedMs;
     if (usesSyncedArrivalTiming(entity)) {
       var duration = Math.max(0.25, (segment.endTime || 0) - (segment.startTime || 0));
       if (duration <= 0.25) {
         duration = isStepDurationTiming()
           ? Math.max(0.25, settings.stepDuration)
-          : entityMoveDuration(segment.startPose, segment.endPose, entity);
+          : entityMoveDuration(segment.startPose, segment.endPose, entity, segment);
       }
-      cruiseSpeedMs = distance / duration;
+      cruiseSpeedMs = cruiseSpeedForTravelTime(distance, duration, accel);
     } else {
       cruiseSpeedMs = kmhToMs(settings.boatSpeed);
     }
-    return motionPathProgress(
-      progress,
-      distance,
-      cruiseSpeedMs,
-      kmhToMs(settings.boatAcceleration)
-    );
+    var arcFraction = motionPathProgress(progress, distance, cruiseSpeedMs, accel);
+    return pathProgressAtArcDistance(arcData, arcFraction * distance);
   }
 
   function recomputeAllSegmentDurations() {
