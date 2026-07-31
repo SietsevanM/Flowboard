@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Flowboard</title>
+  <meta name="description" content="Canoe polo tactic simulator — draw plays step by step and replay them in your browser." />
+  <title>Flowboard – Canoe polo tactic simulator</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <script>
     window.__FLOWBOARD_CACHE_BUST = Date.now();
@@ -111,17 +112,20 @@
           </button>
         </div>
         <button type="button" class="btn btn-toolbar sheet-expand-only" id="btn-goto-start" data-i18n-title="steps.gotoStart.title" data-i18n="steps.gotoStart" disabled>
-          Revert move
+          Revert step
         </button>
         <button type="button" class="btn btn-primary btn-go" id="btn-go" disabled data-i18n="steps.go">
-          Next Move
+          Save & Next Step
         </button>
         <h2 class="steps-panel-title sheet-expand-only" data-i18n="steps.label">Steps</h2>
         <ol id="steps-list" class="steps-list sheet-expand-only"></ol>
         <p id="steps-hint" class="steps-hint muted sheet-expand-only hidden"></p>
         <div class="steps-panel-footer sheet-expand-only">
-          <button type="button" class="btn btn-toolbar hidden" id="btn-export-tactic" data-i18n="settings.export">
-            Export
+          <button type="button" class="btn btn-toolbar hidden" id="btn-share-tactic" data-i18n-title="settings.share" data-i18n-aria="settings.share">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/>
+            </svg>
+            <span class="btn-toolbar-label" data-i18n="settings.share">Share</span>
           </button>
           <button type="button" class="btn btn-toolbar" id="btn-reset-all" data-i18n="steps.reset">
             Reset
@@ -155,6 +159,23 @@
         <button type="button" class="btn" id="btn-close-shortcuts" data-i18n="shortcuts.close">Close</button>
       </div>
       <div id="shortcuts-body" class="shortcuts-body"></div>
+    </div>
+  </div>
+
+  <div id="share-backdrop" class="settings-backdrop hidden">
+    <div class="settings-panel panel share-panel" role="dialog" aria-labelledby="share-title" aria-modal="true">
+      <div class="settings-head">
+        <h2 id="share-title" data-i18n="share.title">Share play</h2>
+        <button type="button" class="btn" id="btn-close-share" data-i18n="settings.close">Close</button>
+      </div>
+      <div class="share-actions">
+        <button type="button" class="btn btn-toolbar" id="btn-share-copy-url" data-i18n="share.copyUrl" disabled>
+          Copy URL
+        </button>
+        <button type="button" class="btn btn-toolbar" id="btn-share-export" data-i18n="settings.export">
+          Export
+        </button>
+      </div>
     </div>
   </div>
 

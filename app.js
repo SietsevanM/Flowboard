@@ -45,7 +45,7 @@
   })();
   var BALL_DIAMETER = 0.7;
   var BALL_CLAIM_SNAP_RADIUS = 1;
-  var DRIBBLE_AHEAD_SECONDS = 2;
+  var DRIBBLE_AHEAD_SECONDS = 1.2;
   var ARC_SAMPLES = 48;
   var GOAL_WIDTH = 1.5;
   var CONFETTI_COLORS = ['#facc15', '#ef4444', '#3b82f6', '#22c55e', '#f97316', '#ec4899', '#a855f7'];
@@ -88,17 +88,19 @@
       motionTimingMode: 'boatSpeed',
       boatSpeedSyncArrival: true,
       stepDuration: 2,
-      boatSpeed: 10,
-      boatAcceleration: 7.2,
-      boatRotationSpeed: 90,
-      ballSpeed: 25,
+      boatSpeed: 15,
+      boatAcceleration: 13,
+      boatRotationSpeed: 180,
+      ballSpeed: 30,
+      // colors[0]=primary/bow, colors[1]=secondary/stern
+      colorsLayout: 'bow-stern',
       defense: {
         boatCount: 5,
         colors: ['#ef4444'],
       },
       attack: {
         boatCount: 5,
-        colors: ['#facc15', '#111111'],
+        colors: ['#111111', '#facc15'],
       },
     };
   }
@@ -392,22 +394,64 @@
     var routes = step.routes && Object.keys(step.routes).length
       ? step.routes
       : buildFallbackRoutes(fromStep, step);
+    // Herstel ontbrekende sync: start van deze stap = eind van de vorige.
+    healRouteStartsFromPrevious(routes, fromStep, index);
+    if (step.routes && Object.keys(step.routes).length) {
+      step.routes = routes;
+    }
     loadRoutesOntoTracks(routes);
+  }
+
+  function healRouteStartsFromPrevious(routes, fromStep, stepIndex) {
+    if (!routes || !fromStep || !fromStep.poses) return;
+    var changed = false;
+    Object.keys(routes).forEach(function (entityId) {
+      var segment = routes[entityId];
+      if (!segment || !segment.startPose) return;
+      var newStart;
+      if (entityId === 'ball') {
+        var holderId = fromStep.ballHolderId;
+        if (holderId && fromStep.poses[holderId]) {
+          newStart = {
+            x: fromStep.poses[holderId].x,
+            y: fromStep.poses[holderId].y,
+            rotation: 0,
+          };
+        } else if (fromStep.poses.ball) {
+          newStart = fromStep.poses.ball;
+        } else {
+          return;
+        }
+      } else if (fromStep.poses[entityId]) {
+        newStart = fromStep.poses[entityId];
+      } else {
+        return;
+      }
+      if (posesApproxEqual(segment.startPose, newStart)) return;
+      updateSegmentStartPose(segment, newStart, segment.startPose);
+      changed = true;
+    });
+    if (changed) applyRouteDurations(routes, stepIndex);
+  }
+
+  function posesApproxEqual(a, b) {
+    if (!a || !b) return false;
+    return distanceMeters(a, b) < 0.05
+      && Math.abs((a.rotation || 0) - (b.rotation || 0)) < 1;
   }
 
   function livePosesMatchStep(step) {
     if (!step || !step.poses) return false;
     var checked = 0;
     var match = 0;
+    // Alleen boten: balpositie kan afwijken door possession/holder-logica.
     state.tactic.entities.forEach(function (entity) {
+      if (entity.type === 'ball') return;
       var stepPose = step.poses[entity.id];
       var pose = entity.initial;
       if (!stepPose || !pose) return;
       checked += 1;
-      if (distanceMeters(pose, stepPose) < 0.05
-        && Math.abs((pose.rotation || 0) - (stepPose.rotation || 0)) < 1) {
-        match += 1;
-      }
+      if (posesApproxEqual(pose, stepPose)) match += 1;
     });
     return checked > 0 && match === checked;
   }
@@ -492,6 +536,17 @@
     settings.defenseFormation = settings.defenseFormation === '1-2-2' ? '1-2-2' : '1-3-1';
     settings.attackFormation = settings.attackFormation === 'fan' ? 'fan' : 'midline';
     var rawSettings = tactic.settings || {};
+    // Old layout was [stern, bow]; flip once to [bow/primary, stern/secondary].
+    var needsColorFlip = rawSettings.colorsLayout !== 'bow-stern';
+    if (needsColorFlip) {
+      if (settings.attack.colors.length === 2) {
+        settings.attack.colors = [settings.attack.colors[1], settings.attack.colors[0]];
+      }
+      if (settings.defense.colors.length === 2) {
+        settings.defense.colors = [settings.defense.colors[1], settings.defense.colors[0]];
+      }
+    }
+    settings.colorsLayout = 'bow-stern';
     if (rawSettings.motionUnits !== 'kmh') {
       if (rawSettings.boatSpeed != null) settings.boatSpeed = Number(rawSettings.boatSpeed) * KMH_PER_MS;
       if (rawSettings.boatAcceleration != null) {
@@ -503,10 +558,10 @@
     settings.motionTimingMode = settings.motionTimingMode === 'stepDuration' ? 'stepDuration' : 'boatSpeed';
     settings.boatSpeedSyncArrival = rawSettings.boatSpeedSyncArrival !== false;
     settings.stepDuration = clamp(Number(settings.stepDuration) || 2, 0.25, 30);
-    settings.boatSpeed = clamp(Number(settings.boatSpeed) || 10, 1, 40);
-    settings.boatAcceleration = clamp(Number(settings.boatAcceleration) || 7.2, 1, 72);
-    settings.boatRotationSpeed = clamp(Number(settings.boatRotationSpeed) || 90, 15, 360);
-    settings.ballSpeed = clamp(Number(settings.ballSpeed) || 25, 1, 80);
+    settings.boatSpeed = clamp(Number(settings.boatSpeed) || 15, 1, 40);
+    settings.boatAcceleration = clamp(Number(settings.boatAcceleration) || 13, 1, 72);
+    settings.boatRotationSpeed = clamp(Number(settings.boatRotationSpeed) || 180, 15, 360);
+    settings.ballSpeed = clamp(Number(settings.ballSpeed) || 30, 1, 80);
     if (typeof rawSettings.showAttack === 'boolean' || typeof rawSettings.showDefense === 'boolean') {
       settings.showAttack = rawSettings.showAttack !== false;
       settings.showDefense = rawSettings.showDefense !== false;
@@ -556,6 +611,8 @@
         entity.colors = entity.team === 'attack'
           ? settings.attack.colors.slice()
           : settings.defense.colors.slice();
+      } else if (needsColorFlip && entity.colors.length === 2) {
+        entity.colors = [entity.colors[1], entity.colors[0]];
       }
       entity.color = entity.colors[0];
     });
@@ -597,9 +654,7 @@
   var state = {
     tactic: createInitialTactic(),
     currentTime: 0,
-    isViewOnly: false,
     isPlaying: false,
-    playMode: null,
     playRaf: null,
     playbackMode: false,
     transport: {
@@ -636,8 +691,8 @@
   var PHONE_LANDSCAPE_MQ = '(orientation: landscape) and (max-height: 560px) and (pointer: coarse)';
   var SHEET_PEEK_PX = 118;
   var MIN_ENTITY_HIT_PX = 22;
-  var LONG_PRESS_MS = 500;
-  var LONG_PRESS_MOVE_PX = 10;
+  var DOUBLE_TAP_MS = 350;
+  var DOUBLE_TAP_SLOP_PX = 28;
 
   function isPhoneLandscape() {
     return !!(window.matchMedia && window.matchMedia(PHONE_LANDSCAPE_MQ).matches);
@@ -937,6 +992,44 @@
     return snapBallToBoatIfNear(entityId, boatPose, ballRefPose);
   }
 
+  function findNearestBoatIdNearPose(pose, maxDist) {
+    if (!pose) return null;
+    maxDist = maxDist == null ? BALL_CLAIM_SNAP_RADIUS : maxDist;
+    var bestId = null;
+    var bestDist = maxDist;
+    state.tactic.entities.forEach(function (entity) {
+      if (entity.type !== 'boat') return;
+      var dist = distanceMeters(pose, entity.initial);
+      if (dist <= bestDist) {
+        bestDist = dist;
+        bestId = entity.id;
+      }
+    });
+    return bestId;
+  }
+
+  function placeBallFreestyleAt(pose) {
+    var ball = getBallEntity();
+    if (!ball || !pose) return;
+    var boatId = findNearestBoatIdNearPose(pose);
+    if (boatId) {
+      var boat = state.tactic.entities.find(function (item) { return item.id === boatId; });
+      setBallHolderId(boatId);
+      if (boat) {
+        ball.initial.x = boat.initial.x;
+        ball.initial.y = boat.initial.y;
+      } else {
+        ball.initial.x = pose.x;
+        ball.initial.y = pose.y;
+      }
+    } else {
+      setBallHolderId(null);
+      ball.initial.x = pose.x;
+      ball.initial.y = pose.y;
+    }
+    ball.initial.rotation = 0;
+  }
+
   function getBallEntity() {
     return state.tactic.entities.find(function (item) { return item.type === 'ball'; });
   }
@@ -981,15 +1074,6 @@
     return entity ? entity.team : null;
   }
 
-  function hitTestBallHolderIndicator(holderPose, x, y) {
-    var canvasPose = metersToCanvas(holderPose);
-    var offset = Math.max(8, fieldScale * 0.22);
-    var radius = Math.max(8, fieldScale * 0.18);
-    var ix = canvasPose.x + offset;
-    var iy = canvasPose.y - offset;
-    return Math.hypot(x - ix, y - iy) <= radius;
-  }
-
   function getBallPickAtCanvasPoint(x, y) {
     if (hasBallRoute()) return null;
     var holderId = getBallHolderId();
@@ -1001,17 +1085,6 @@
     var canvasPose = metersToCanvas(startPose);
     if (Math.hypot(x - canvasPose.x, y - canvasPose.y) <= ballHit) {
       return { startPose: clone(startPose), holderId: holderId };
-    }
-
-    if (holderId) {
-      var holder = state.tactic.entities.find(function (item) { return item.id === holderId; });
-      if (holder) {
-        var poses = getPosesAtTime();
-        var holderPose = poses[holderId] || holder.initial;
-        if (hitTestBallHolderIndicator(holderPose, x, y)) {
-          return { startPose: clone(startPose), holderId: holderId };
-        }
-      }
     }
 
     return null;
@@ -1302,7 +1375,7 @@
   }
 
   function toggleSettingsPanel() {
-    if (isExportDialogOpen() || state.shortcutsOpen) return;
+    if (isExportDialogOpen() || isShareDialogOpen() || state.shortcutsOpen) return;
     state.settingsOpen = !state.settingsOpen;
     renderSettings();
   }
@@ -1331,7 +1404,7 @@
   }
 
   function openShortcutsDialog() {
-    if (isExportDialogOpen()) return;
+    if (isExportDialogOpen() || isShareDialogOpen()) return;
     state.settingsOpen = false;
     renderSettings();
     state.shortcutsOpen = true;
@@ -1364,7 +1437,7 @@
           { keys: mod + '+Z', actionKey: 'shortcuts.undo' },
           { keys: mod + '+Y / ' + mod + '+Shift+Z', actionKey: 'shortcuts.redo' },
           { keys: 'S', actionKey: 'shortcuts.settings' },
-          { keys: mod + '+S', actionKey: 'shortcuts.export' },
+          { keys: mod + '+S', actionKey: 'shortcuts.share' },
           { keys: mod + '+O', actionKey: 'shortcuts.import' },
           { keys: 'M', actionKey: 'shortcuts.toggleSheet' },
         ],
@@ -1484,7 +1557,7 @@
   }
 
   function canEdit() {
-    return !state.isViewOnly && !state.isPlaying && !state.playbackMode;
+    return !state.isPlaying && !state.playbackMode;
   }
 
   function transportSpeed() {
@@ -1560,27 +1633,29 @@
     if ((segment.endTime || 0) > (segment.startTime || 0)) {
       return segment.endTime - (segment.startTime || 0);
     }
-    return entityMoveDuration(segment.startPose, segment.endPose, entity);
+    var travelDist = entity && entity.type === 'boat'
+      ? segmentTravelDistance(segment)
+      : null;
+    return entityMoveDuration(segment.startPose, segment.endPose, entity, travelDist);
   }
 
   function maxDurationOfRoutes(routes) {
     var max = 0;
     if (!routes) return 0;
-    if (isBoatSpeedSyncArrival()) {
-      max = boatSyncedStepDuration(routes);
-    }
+    // After applyRouteDurations, segment endTimes already include synced arrival
+    // and catch-pace extensions. Using those avoids cutting a slow meet-approach
+    // short and teleporting the boat to its end pose.
     Object.keys(routes).forEach(function (entityId) {
       var segment = routes[entityId];
       if (!segment) return;
       var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
-      if (isBoatSpeedSyncArrival() && entity && entity.type === 'boat') return;
       var duration = routeSegmentDuration(segment, entity);
       if (duration > max) max = duration;
     });
     return max;
   }
 
-  function normalizeRoutes(routes) {
+  function normalizeRoutes(routes, stepIndex) {
     var normalized = {};
     if (!routes) return normalized;
     Object.keys(routes).forEach(function (entityId) {
@@ -1588,7 +1663,7 @@
       if (!segment) return;
       normalized[entityId] = segment;
     });
-    applyRouteDurations(normalized);
+    applyRouteDurations(normalized, stepIndex);
     return normalized;
   }
 
@@ -1601,7 +1676,11 @@
       var rawRoutes = steps[i].routes && Object.keys(steps[i].routes).length
         ? steps[i].routes
         : buildFallbackRoutes(steps[i - 1], steps[i]);
-      var routes = normalizeRoutes(rawRoutes);
+      healRouteStartsFromPrevious(rawRoutes, steps[i - 1], i);
+      if (steps[i].routes && Object.keys(steps[i].routes).length) {
+        steps[i].routes = rawRoutes;
+      }
+      var routes = normalizeRoutes(rawRoutes, i);
       var duration = Math.max(0.05, maxDurationOfRoutes(routes));
       transitions.push({
         startTime: cursor,
@@ -1689,7 +1768,7 @@
         var pathT = entity.type === 'ball'
           ? ballSegmentPathProgress(segment, localTime)
           : boatPathProgressAtLocalTime(segment, localTime, entity, motionOpts);
-        poses[entity.id] = poseAlongSegment(segment, pathT, entity);
+        poses[entity.id] = poseAlongPathProgress(segment, pathT, entity);
       });
       var step = state.tactic.steps[transition.stepIndex];
       applyBallPoseOverrides(
@@ -1931,7 +2010,6 @@
       state.playRaf = null;
     }
     state.isPlaying = false;
-    state.playMode = null;
     ensureConfettiLoop();
   }
 
@@ -1988,6 +2066,12 @@
     }
   }
 
+  function segmentHasTravel(segment) {
+    if (!segment || !segment.startPose || !segment.endPose) return false;
+    return distanceMeters(segment.startPose, segment.endPose) >= 0.05
+      || Math.abs((segment.startPose.rotation || 0) - (segment.endPose.rotation || 0)) >= 1;
+  }
+
   function updateNextStepRouteStarts(nextStep, prevStep, oldPrevPoses) {
     if (!nextStep || !prevStep) return;
     var routes = nextStep.routes;
@@ -2008,7 +2092,7 @@
             y: oldStart.y + holderDelta.dy,
             rotation: oldStart.rotation || 0,
           };
-        } else if (newPrevPoses.ball && oldPrevPoses.ball) {
+        } else if (newPrevPoses.ball) {
           newStart = clone(newPrevPoses.ball);
         } else {
           return;
@@ -2020,7 +2104,65 @@
       }
       updateSegmentStartPose(segment, newStart, oldStart);
     });
-    applyRouteDurations(routes);
+    applyRouteDurations(routes, state.tactic.steps.indexOf(nextStep));
+  }
+
+  // Na een gewijzigde eindpositie: start van de volgende stap laten meeschuiven.
+  // Boten met een route: alleen startPose (eind blijft). Stilstaande boten: poses
+  // meeschuiven en zo nodig verder doorgeven aan latere stappen.
+  function propagateStepEndChanges(stepIndex, oldEndPoses) {
+    ensureSteps(state.tactic);
+    var step = state.tactic.steps[stepIndex];
+    var nextStep = state.tactic.steps[stepIndex + 1];
+    if (!step || !nextStep) return;
+
+    updateNextStepRouteStarts(nextStep, step, oldEndPoses);
+
+    var newEndPoses = step.poses || {};
+    oldEndPoses = oldEndPoses || {};
+    if (!nextStep.poses || typeof nextStep.poses !== 'object') nextStep.poses = {};
+    var nextOldPoses = clone(nextStep.poses);
+    var nextPosesChanged = false;
+
+    state.tactic.entities.forEach(function (entity) {
+      var entityId = entity.id;
+      var oldPrev = oldEndPoses[entityId];
+      var newPrev = newEndPoses[entityId];
+      if (!oldPrev || !newPrev) return;
+      if (posesApproxEqual(oldPrev, newPrev)) return;
+
+      var route = nextStep.routes && nextStep.routes[entityId];
+      if (segmentHasTravel(route)) return;
+
+      var nextPose = nextStep.poses[entityId];
+      if (nextPose && !posesApproxEqual(nextPose, oldPrev)) return;
+      nextStep.poses[entityId] = clone(newPrev);
+      nextPosesChanged = true;
+    });
+
+    if (nextStep.ballHolderId && nextStep.poses[nextStep.ballHolderId]) {
+      nextStep.poses.ball = clone(nextStep.poses[nextStep.ballHolderId]);
+    }
+
+    if (nextPosesChanged) {
+      propagateStepEndChanges(stepIndex + 1, nextOldPoses);
+    }
+  }
+
+  function syncStepPosesFromRoutes(step, routes, startPoses, ballHolderId) {
+    var poses = clone(startPoses || {});
+    Object.keys(routes || {}).forEach(function (entityId) {
+      var segment = routes[entityId];
+      if (!segment || !segment.endPose) return;
+      if (entityId === 'ball') return;
+      poses[entityId] = clone(segment.endPose);
+    });
+    if (ballHolderId && poses[ballHolderId]) {
+      poses.ball = clone(poses[ballHolderId]);
+    } else if (routes && routes.ball && routes.ball.endPose) {
+      poses.ball = clone(routes.ball.endPose);
+    }
+    step.poses = poses;
   }
 
   function commitPlaybackToNextStep() {
@@ -2028,6 +2170,7 @@
     var routes = captureDraftRoutes();
     var prevStep = getCurrentStep();
     var prevHolderId = prevStep && prevStep.ballHolderId;
+    var startPoses = captureEntityPoses(state.tactic.entities);
     var endPoses = getPosesAtTime();
     state.tactic.entities.forEach(function (entity) {
       if (!endPoses[entity.id]) return;
@@ -2042,20 +2185,35 @@
     if (reviewing) {
       var index = state.tactic.currentStepIndex;
       var step = state.tactic.steps[index];
+      var savedName = step ? (step.name || stepNameForIndex(index)) : '';
       if (step) {
         var oldEndPoses = clone(step.poses);
-        step.poses = captureEntityPoses(state.tactic.entities);
+        // Eindposes uit route-einden (betrouwbaarder dan alleen live interpolatie).
+        syncStepPosesFromRoutes(step, routes, startPoses, nextHolderId);
+        Object.keys(endPoses).forEach(function (entityId) {
+          if (entityId === 'ball') return;
+          if (routes[entityId]) return;
+          if (endPoses[entityId]) step.poses[entityId] = clone(endPoses[entityId]);
+        });
+        if (nextHolderId && step.poses[nextHolderId]) {
+          step.poses.ball = clone(step.poses[nextHolderId]);
+        } else if (endPoses.ball) {
+          step.poses.ball = clone(endPoses.ball);
+        }
         step.routes = routes;
         step.ballHolderId = nextHolderId;
-        var followingStep = state.tactic.steps[index + 1];
-        if (followingStep) {
-          updateNextStepRouteStarts(followingStep, step, oldEndPoses);
-        }
+        propagateStepEndChanges(index, oldEndPoses);
+      }
+      // Save & Next: ga door naar de bestaande volgende stap als die er is.
+      var followingIndex = index + 1;
+      if (followingIndex < state.tactic.steps.length) {
+        state.tactic.currentStepIndex = followingIndex;
+        applyStepDiagram(followingIndex);
       }
       state.tactic.updatedAt = new Date().toISOString();
       clearPointerInteraction();
       invalidateTransportTimeline();
-      return;
+      return savedName;
     }
 
     var nextIndex = state.tactic.currentStepIndex + 1;
@@ -2071,12 +2229,15 @@
     state.tactic.updatedAt = new Date().toISOString();
     clearPointerInteraction();
     invalidateTransportTimeline();
+    return nextStep.name || stepNameForIndex(nextIndex);
   }
 
   function finishGoPlayback() {
     stopPlayback();
-    commitPlaybackToNextStep();
-    setMessage(t('message.stepSaved', { name: state.tactic.steps[state.tactic.currentStepIndex].name }));
+    var savedName = commitPlaybackToNextStep();
+    setMessage(t('message.stepSaved', {
+      name: savedName || state.tactic.steps[state.tactic.currentStepIndex].name,
+    }));
     renderAll();
     ensureConfettiLoop();
   }
@@ -2086,7 +2247,6 @@
     if (state.playbackMode) exitPlaybackMode();
     recordHistory();
     state.isPlaying = true;
-    state.playMode = 'go';
     clearPointerInteraction();
     updateToolbar();
     renderStepsPanel();
@@ -2328,7 +2488,7 @@
 
     if (goBtn) {
       goBtn.disabled = !canEdit() || !hasDraftRoutes() || state.startPoseEdit;
-      goBtn.textContent = state.isPlaying && state.playMode === 'go' ? t('steps.go.busy') : t('steps.go');
+      goBtn.textContent = state.isPlaying ? t('steps.go.busy') : t('steps.go');
       goBtn.title = withShortcut(t('steps.go'), 'Space / G');
     }
     if (hint) {
@@ -2358,6 +2518,20 @@
     state.history.past.push(clone(state.tactic));
     if (state.history.past.length > 50) state.history.past.shift();
     state.history.future = [];
+  }
+
+  function clearHistory() {
+    state.history.past = [];
+    state.history.future = [];
+  }
+
+  function restoreTacticKeepingSettings(nextTactic) {
+    var settings = clone(state.tactic.settings);
+    state.tactic = nextTactic;
+    state.tactic.settings = settings;
+    applyTeamColors('attack');
+    applyTeamColors('defense');
+    recomputeAllSegmentDurations();
   }
 
   function hasStartPosition() {
@@ -2428,11 +2602,8 @@
     }
     var settingsBtn = document.getElementById('btn-settings');
     if (settingsBtn) settingsBtn.title = withShortcut(t('header.settings'), 'S');
-    var exportBtn = document.getElementById('btn-export-tactic');
-    if (exportBtn) {
-      exportBtn.classList.toggle('hidden', !hasPlayableSteps());
-      exportBtn.title = withShortcut(t('settings.export'), modShortcutLabel() + '+S');
-    }
+    updateShareButton();
+    scheduleShareLinkRefresh();
     renderStepsPanel();
   }
 
@@ -2442,7 +2613,7 @@
     invalidateTransportTimeline();
     state.startPoseEdit = false;
     state.history.future.push(clone(state.tactic));
-    state.tactic = state.history.past.pop();
+    restoreTacticKeepingSettings(state.history.past.pop());
     ensureSteps(state.tactic);
     state.currentTime = 0;
     clearPointerInteraction();
@@ -2455,7 +2626,7 @@
     invalidateTransportTimeline();
     state.startPoseEdit = false;
     state.history.past.push(clone(state.tactic));
-    state.tactic = state.history.future.pop();
+    restoreTacticKeepingSettings(state.history.future.pop());
     ensureSteps(state.tactic);
     state.currentTime = 0;
     clearPointerInteraction();
@@ -2484,7 +2655,7 @@
     recordHistory();
     clearDraftRoutes();
     var snapshot = captureEntityPoses(state.tactic.entities);
-    var holderId = getBallHolderId() || defaultStartBallHolderId(state.tactic.settings);
+    var holderId = getBallHolderId();
     if (holderId && snapshot[holderId]) {
       snapshot.ball = clone(snapshot[holderId]);
     }
@@ -2492,11 +2663,8 @@
     ensureSteps(state.tactic);
     var oldStartPoses = clone(state.tactic.steps[0].poses);
     state.tactic.steps[0].poses = clone(snapshot);
-    if (holderId) state.tactic.steps[0].ballHolderId = holderId;
-    var firstStep = state.tactic.steps[1];
-    if (firstStep) {
-      updateNextStepRouteStarts(firstStep, state.tactic.steps[0], oldStartPoses);
-    }
+    state.tactic.steps[0].ballHolderId = holderId;
+    propagateStepEndChanges(0, oldStartPoses);
     invalidateTransportTimeline();
     state.tactic.updatedAt = new Date().toISOString();
     state.startPoseEdit = false;
@@ -2953,6 +3121,26 @@
     };
   }
 
+  // pathProgress = fractie van de booglengte (0–1), niet de ruwe Bezier-parameter.
+  // Bij scheve curves is |B'(t)| aan het eind vaak veel groter; zonder deze mapping
+  // lijkt de boot daar te versnellen terwijl de tijd-easing juist afremt.
+  function bezierTFromPathProgress(segment, pathProgress) {
+    var progress = clamp(pathProgress, 0, 1);
+    if (progress <= 0) return 0;
+    if (progress >= 1) return 1;
+    var arcData = getSegmentArcData(segment);
+    if (arcData.total < 1e-8) return progress;
+    return pathProgressAtArcDistance(arcData, progress * arcData.total);
+  }
+
+  function poseAlongPathProgress(segment, pathProgress, entity) {
+    return poseAlongSegment(segment, bezierTFromPathProgress(segment, pathProgress), entity);
+  }
+
+  function arcDistanceFromPathProgress(arcData, pathProgress) {
+    return clamp(pathProgress, 0, 1) * (arcData.total || 0);
+  }
+
   function arrivalRotation(start, end, controlOut, controlIn, fallbackRotation) {
     var p0 = { x: start.x, y: start.y };
     var p3 = { x: end.x, y: end.y };
@@ -3066,12 +3254,358 @@
     delete segment.catchMeetTime;
     delete segment.catchAfterDuration;
     delete segment.catchApproachSpeed;
+    delete segment.catchEntrySpeed;
+    delete segment.catchContinuesToNext;
   }
 
   function hasBoatCatchPace(segment) {
     return !!(segment
       && segment.catchMeetTime != null
       && segment.catchMeetArc != null);
+  }
+
+  // Aanloop met beginsnelheid: accel/decel naar cruise, geen eindstop (bal vangen met vaart).
+  function travelTimeNoDecelFromSpeed(distance, v0, vCruise, accel) {
+    var a = Math.max(0.1, accel);
+    var d = Math.max(0, distance);
+    v0 = Math.max(0, v0);
+    vCruise = Math.max(0.1, vCruise);
+    if (d < 1e-8) return 0;
+
+    if (Math.abs(v0 - vCruise) <= 1e-8) return d / vCruise;
+
+    if (v0 < vCruise) {
+      var dAccel = (vCruise * vCruise - v0 * v0) / (2 * a);
+      if (dAccel >= d - 1e-8) {
+        var vPeak = Math.sqrt(Math.max(0, v0 * v0 + 2 * a * d));
+        return (vPeak - v0) / a;
+      }
+      return (vCruise - v0) / a + (d - dAccel) / vCruise;
+    }
+
+    var dDecel = (v0 * v0 - vCruise * vCruise) / (2 * a);
+    if (dDecel >= d - 1e-8) {
+      var vf = Math.sqrt(Math.max(0, v0 * v0 - 2 * a * d));
+      return (v0 - vf) / a;
+    }
+    return (v0 - vCruise) / a + (d - dDecel) / vCruise;
+  }
+
+  function distanceAtTimeNoDecelFromSpeed(time, distance, v0, vCruise, accel) {
+    var a = Math.max(0.1, accel);
+    var d = Math.max(0, distance);
+    v0 = Math.max(0, v0);
+    vCruise = Math.max(0.1, vCruise);
+    if (d < 1e-8 || time <= 0) return 0;
+    var total = travelTimeNoDecelFromSpeed(d, v0, vCruise, a);
+    if (time >= total) return d;
+
+    if (Math.abs(v0 - vCruise) <= 1e-8) return Math.min(d, v0 * time);
+
+    if (v0 < vCruise) {
+      var dAccel = (vCruise * vCruise - v0 * v0) / (2 * a);
+      var tAccel = (vCruise - v0) / a;
+      if (dAccel >= d - 1e-8) {
+        return Math.min(d, v0 * time + 0.5 * a * time * time);
+      }
+      if (time <= tAccel) return v0 * time + 0.5 * a * time * time;
+      return dAccel + vCruise * (time - tAccel);
+    }
+
+    var dDecel = (v0 * v0 - vCruise * vCruise) / (2 * a);
+    var tDecel = (v0 - vCruise) / a;
+    if (dDecel >= d - 1e-8) {
+      return Math.min(d, v0 * time - 0.5 * a * time * time);
+    }
+    if (time <= tDecel) return v0 * time - 0.5 * a * time * time;
+    return dDecel + vCruise * (time - tDecel);
+  }
+
+  function timeToCoverDistanceNoDecelFromSpeed(pathDistance, coverDistance, v0, vCruise, accel) {
+    var path = Math.max(0, pathDistance);
+    var cover = clamp(coverDistance, 0, path);
+    if (cover <= 1e-8) return 0;
+    if (path < 1e-8 || cover >= path - 1e-8) {
+      return travelTimeNoDecelFromSpeed(path, v0, vCruise, accel);
+    }
+    var total = travelTimeNoDecelFromSpeed(path, v0, vCruise, accel);
+    var low = 0;
+    var high = total;
+    var i;
+    for (i = 0; i < 24; i++) {
+      var mid = (low + high) / 2;
+      if (distanceAtTimeNoDecelFromSpeed(mid, path, v0, vCruise, accel) < cover) low = mid;
+      else high = mid;
+    }
+    return (low + high) / 2;
+  }
+
+  // Zoek cruise zodat travelTimeNoDecelFromSpeed(d, v0, cruise, a) ≈ desiredTime.
+  function cruiseSpeedForTravelTimeNoDecelFromSpeed(distance, desiredTime, v0, accel) {
+    var a = Math.max(0.1, accel);
+    var d = Math.max(0, distance);
+    var t = Math.max(0.01, desiredTime);
+    v0 = Math.max(0, v0);
+    if (d < 1e-8) return 0.1;
+    if (v0 < 1e-8) return cruiseSpeedForTravelTimeNoDecel(d, t, a);
+
+    // Snelste: accel oneindig hard (praktisch: hoge cruise).
+    var minTime = travelTimeNoDecelFromSpeed(d, v0, Math.max(v0 * 4, d / Math.max(0.05, t) * 2), a);
+    // Conservatiever: min tijd met cruise ≥ v0 (niet sneller dan nodig zoeken via binary).
+    var highFast = Math.max(v0, (2 * d) / t, 1);
+    var expand;
+    for (expand = 0; expand < 16; expand++) {
+      if (travelTimeNoDecelFromSpeed(d, v0, highFast, a) <= t) break;
+      highFast *= 2;
+    }
+    minTime = travelTimeNoDecelFromSpeed(d, v0, highFast, a);
+    if (t <= minTime + 1e-6) return Math.max(0.1, highFast);
+
+    var low = 0.05;
+    var high = highFast;
+    var i;
+    for (i = 0; i < 32; i++) {
+      var mid = (low + high) / 2;
+      if (travelTimeNoDecelFromSpeed(d, v0, mid, a) > t) low = mid;
+      else high = mid;
+    }
+    return Math.max(0.05, high);
+  }
+
+  function entityContinuesFromPreviousStep(entityId, stepIndex) {
+    ensureSteps(state.tactic);
+    if (stepIndex == null) stepIndex = state.tactic.currentStepIndex;
+    if (!entityId || stepIndex <= 0) return false;
+    var prev = state.tactic.steps[stepIndex - 1];
+    return !!(prev && prev.routes && prev.routes[entityId]);
+  }
+
+  function entityContinuesToNextStep(entityId, stepIndex) {
+    ensureSteps(state.tactic);
+    if (stepIndex == null) stepIndex = state.tactic.currentStepIndex;
+    if (!entityId || stepIndex < 0) return false;
+    var next = state.tactic.steps[stepIndex + 1];
+    return !!(next && next.routes && next.routes[entityId]);
+  }
+
+  function catchEntrySpeedForEntity(entityId, stepIndex) {
+    if (!entityContinuesFromPreviousStep(entityId, stepIndex)) return 0;
+    return Math.max(0.1, kmhToMs(getSettings().boatSpeed));
+  }
+
+  // Als een boot doorvaart naar de volgende stap, niet vroeg stilzetten terwijl
+  // bijv. de bal de stap nog verlengt — rek de bootbeweging op tot de stapduur.
+  function stretchContinuingBoatDurations(routes, stepIndex) {
+    if (!routes) return;
+    var stepMax = 0;
+    Object.keys(routes).forEach(function (entityId) {
+      var segment = routes[entityId];
+      if (!segment) return;
+      var end = segment.endTime || 0;
+      if (end > stepMax) stepMax = end;
+    });
+    if (stepMax <= 0) return;
+    Object.keys(routes).forEach(function (entityId) {
+      var segment = routes[entityId];
+      if (!segment || hasBoatCatchPace(segment)) return;
+      var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+      if (!entity || entity.type !== 'boat') return;
+      if (!entityContinuesToNextStep(entityId, stepIndex)) return;
+      if ((segment.endTime || 0) < stepMax - 1e-6) {
+        segment.endTime = stepMax;
+      }
+    });
+  }
+
+  // Na catch-pace of stretch: alle boten weer op dezelfde eindtijd (sync arrival).
+  function resyncSyncedBoatArrivals(routes) {
+    if (!routes || !isBoatSpeedSyncArrival()) return;
+    var stepMax = 0;
+    Object.keys(routes).forEach(function (entityId) {
+      var segment = routes[entityId];
+      if (!segment) return;
+      var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+      if (!entity || entity.type !== 'boat') return;
+      var end = segment.endTime || 0;
+      if (end > stepMax) stepMax = end;
+    });
+    if (stepMax <= 0) return;
+    Object.keys(routes).forEach(function (entityId) {
+      var segment = routes[entityId];
+      if (!segment) return;
+      var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
+      if (!entity || entity.type !== 'boat') return;
+      if ((segment.endTime || 0) >= stepMax - 1e-6) return;
+      segment.endTime = stepMax;
+      if (hasBoatCatchPace(segment)) {
+        var meetTime = Math.max(0, segment.catchMeetTime || 0);
+        segment.catchAfterDuration = Math.max(
+          0,
+          stepMax - (segment.startTime || 0) - meetTime
+        );
+      }
+    });
+  }
+
+  function earliestBoatMeetTime(meetArc, speed, accel, entrySpeed) {
+    if (meetArc < 1e-8) return 0;
+    entrySpeed = Math.max(0, entrySpeed || 0);
+    if (entrySpeed > 1e-6) {
+      return Math.max(0.25, travelTimeNoDecelFromSpeed(meetArc, entrySpeed, speed, accel));
+    }
+    return Math.max(0.25, travelTimeNoDecel(meetArc, speed, accel));
+  }
+
+  function applyBoatCatchPace(segment, meetArc, meetTime, entrySpeed, continuesToNext) {
+    if (!segment) return;
+    var arcData = getSegmentArcData(segment);
+    var meet = meetArc == null ? arcData.total : clamp(meetArc, 0, arcData.total);
+    var settings = getSettings();
+    var accel = kmhToMs(settings.boatAcceleration);
+    var normalSpeed = Math.max(0.1, kmhToMs(settings.boatSpeed));
+    entrySpeed = Math.max(0, entrySpeed || 0);
+    continuesToNext = !!continuesToNext;
+    // Nooit sneller plannen dan met beginsnelheid + normale cruise haalbaar is.
+    var arriveAt = Math.max(
+      0.25,
+      meetTime,
+      earliestBoatMeetTime(meet, normalSpeed, accel, entrySpeed)
+    );
+    var remaining = Math.max(0, arcData.total - meet);
+    var approachSpeed = 0;
+    if (meet >= 1e-8) {
+      approachSpeed = entrySpeed > 1e-6
+        ? cruiseSpeedForTravelTimeNoDecelFromSpeed(meet, arriveAt, entrySpeed, accel)
+        : cruiseSpeedForTravelTimeNoDecel(meet, arriveAt, accel);
+      arriveAt = Math.max(
+        arriveAt,
+        entrySpeed > 1e-6
+          ? travelTimeNoDecelFromSpeed(meet, entrySpeed, approachSpeed, accel)
+          : travelTimeNoDecel(meet, approachSpeed, accel)
+      );
+    }
+    // Doorvaart naar volgende stap: na de vangst niet afremmen naar stilstand.
+    var afterDuration = remaining < 1e-8
+      ? 0
+      : Math.max(0.01, continuesToNext
+        ? travelTimeNoDecelFromSpeed(remaining, approachSpeed, normalSpeed, accel)
+        : travelTimeFromSpeed(remaining, approachSpeed, normalSpeed, accel));
+
+    clearBoatCatchPace(segment);
+    segment.catchMeetArc = meet;
+    segment.catchMeetTime = arriveAt;
+    segment.catchApproachSpeed = approachSpeed;
+    segment.catchEntrySpeed = entrySpeed;
+    segment.catchAfterDuration = afterDuration;
+    segment.catchContinuesToNext = continuesToNext;
+    segment.endTime = (segment.startTime || 0) + arriveAt + afterDuration;
+  }
+
+  // Als sync arrival de after-fase oprekt: trager varen i.p.v. vroeg aankomen en wachten.
+  function catchAfterPhaseSpeed(remaining, afterDuration, approachSpeed, normalSpeed, accel, continuesToNext) {
+    remaining = Math.max(0, remaining);
+    afterDuration = Math.max(0, afterDuration);
+    approachSpeed = Math.max(0, approachSpeed);
+    normalSpeed = Math.max(0.1, normalSpeed);
+    accel = Math.max(0.1, accel);
+    if (remaining < 1e-8 || afterDuration <= 0) return normalSpeed;
+
+    var natural = continuesToNext
+      ? travelTimeNoDecelFromSpeed(remaining, approachSpeed, normalSpeed, accel)
+      : travelTimeFromSpeed(remaining, approachSpeed, normalSpeed, accel);
+    if (afterDuration <= natural + 1e-6) return normalSpeed;
+
+    if (continuesToNext) {
+      return cruiseSpeedForTravelTimeNoDecelFromSpeed(
+        remaining,
+        afterDuration,
+        approachSpeed,
+        accel
+      );
+    }
+
+    // Met eindstop: zoek lagere cruise zodat travelTimeFromSpeed ≈ afterDuration.
+    var low = 0.05;
+    var high = normalSpeed;
+    var i;
+    for (i = 0; i < 32; i++) {
+      var mid = (low + high) / 2;
+      if (travelTimeFromSpeed(remaining, approachSpeed, mid, accel) > afterDuration) high = mid;
+      else low = mid;
+    }
+    return Math.max(0.05, high);
+  }
+
+  function boatCatchPacePathProgress(segment, localTime) {
+    var arcData = getSegmentArcData(segment);
+    var meetArc = clamp(segment.catchMeetArc, 0, arcData.total);
+    var meetTime = Math.max(0.01, segment.catchMeetTime);
+    var afterDuration = Math.max(0, segment.catchAfterDuration || 0);
+    var continuesToNext = !!segment.catchContinuesToNext;
+    var settings = getSettings();
+    var accel = kmhToMs(settings.boatAcceleration);
+    var normalSpeed = Math.max(0.1, kmhToMs(settings.boatSpeed));
+    var entrySpeed = Math.max(0, segment.catchEntrySpeed || 0);
+    var approachSpeed = segment.catchApproachSpeed != null
+      ? segment.catchApproachSpeed
+      : (entrySpeed > 1e-6
+        ? cruiseSpeedForTravelTimeNoDecelFromSpeed(meetArc, meetTime, entrySpeed, accel)
+        : cruiseSpeedForTravelTimeNoDecel(meetArc, meetTime, accel));
+    var boatArc;
+
+    if (localTime <= meetTime) {
+      if (meetArc < 1e-8) {
+        boatArc = 0;
+      } else if (entrySpeed > 1e-6) {
+        boatArc = distanceAtTimeNoDecelFromSpeed(
+          clamp(localTime, 0, meetTime),
+          meetArc,
+          entrySpeed,
+          approachSpeed,
+          accel
+        );
+      } else {
+        boatArc = distanceAtTimeNoDecel(
+          clamp(localTime, 0, meetTime),
+          meetArc,
+          approachSpeed,
+          accel
+        );
+      }
+    } else {
+      var remaining = Math.max(0, arcData.total - meetArc);
+      if (remaining < 1e-8 || afterDuration <= 0) {
+        boatArc = arcData.total;
+      } else {
+        var afterTime = Math.min(Math.max(0, localTime - meetTime), afterDuration);
+        var afterSpeed = catchAfterPhaseSpeed(
+          remaining,
+          afterDuration,
+          approachSpeed,
+          normalSpeed,
+          accel,
+          continuesToNext
+        );
+        var covered = continuesToNext
+          ? distanceAtTimeNoDecelFromSpeed(
+            afterTime,
+            remaining,
+            approachSpeed,
+            afterSpeed,
+            accel
+          )
+          : distanceAtTimeFromSpeed(
+            afterTime,
+            remaining,
+            approachSpeed,
+            afterSpeed,
+            accel
+          );
+        boatArc = meetArc + covered;
+      }
+    }
+
+    return clamp(boatArc / Math.max(1e-8, arcData.total), 0, 1);
   }
 
   function pathProgressAtArcDistance(arcData, targetArc) {
@@ -3116,6 +3650,8 @@
   }
 
   // Zoek cruise-snelheid zodat travelTimeNoDecel(distance, speed, accel) ≈ desiredTime.
+  // Als desiredTime korter is dan accel-only vanaf stilstand, geef de snelheid voor
+  // die minimale tijd terug (caller moet arriveAt hierop clampen).
   function cruiseSpeedForTravelTimeNoDecel(distance, desiredTime, accel) {
     var a = Math.max(0.1, accel);
     var d = Math.max(0, distance);
@@ -3124,7 +3660,8 @@
 
     var minAccelOnlyTime = Math.sqrt((2 * d) / a);
     if (t <= minAccelOnlyTime + 1e-6) {
-      return Math.max(0.1, Math.sqrt(Math.max(0.1, a * d)));
+      // v_peak bij accel over hele afstand: v² = 2·a·d
+      return Math.max(0.1, Math.sqrt(Math.max(0.1, 2 * a * d)));
     }
 
     var low = 0.05;
@@ -3273,73 +3810,6 @@
     return (low + high) / 2;
   }
 
-  function applyBoatCatchPace(segment, meetArc, meetTime) {
-    if (!segment) return;
-    var arcData = getSegmentArcData(segment);
-    var meet = meetArc == null ? arcData.total : clamp(meetArc, 0, arcData.total);
-    var arriveAt = Math.max(0.25, meetTime);
-    var remaining = Math.max(0, arcData.total - meet);
-    var settings = getSettings();
-    var accel = kmhToMs(settings.boatAcceleration);
-    var normalSpeed = Math.max(0.1, kmhToMs(settings.boatSpeed));
-    var approachSpeed = meet < 1e-8
-      ? 0
-      : cruiseSpeedForTravelTimeNoDecel(meet, arriveAt, accel);
-    var afterDuration = remaining < 1e-8
-      ? 0
-      : Math.max(0.01, travelTimeFromSpeed(remaining, approachSpeed, normalSpeed, accel));
-
-    clearBoatCatchPace(segment);
-    segment.catchMeetArc = meet;
-    segment.catchMeetTime = arriveAt;
-    segment.catchApproachSpeed = approachSpeed;
-    segment.catchAfterDuration = afterDuration;
-    segment.endTime = (segment.startTime || 0) + arriveAt + afterDuration;
-  }
-
-  function boatCatchPacePathProgress(segment, localTime) {
-    var arcData = getSegmentArcData(segment);
-    var meetArc = clamp(segment.catchMeetArc, 0, arcData.total);
-    var meetTime = Math.max(0.01, segment.catchMeetTime);
-    var afterDuration = Math.max(0, segment.catchAfterDuration || 0);
-    var settings = getSettings();
-    var accel = kmhToMs(settings.boatAcceleration);
-    var normalSpeed = Math.max(0.1, kmhToMs(settings.boatSpeed));
-    var approachSpeed = segment.catchApproachSpeed != null
-      ? segment.catchApproachSpeed
-      : cruiseSpeedForTravelTimeNoDecel(meetArc, meetTime, accel);
-    var boatArc;
-
-    if (localTime <= meetTime) {
-      if (meetArc < 1e-8) {
-        boatArc = 0;
-      } else {
-        boatArc = distanceAtTimeNoDecel(
-          clamp(localTime, 0, meetTime),
-          meetArc,
-          approachSpeed,
-          accel
-        );
-      }
-    } else {
-      var remaining = Math.max(0, arcData.total - meetArc);
-      if (remaining < 1e-8 || afterDuration <= 0) {
-        boatArc = arcData.total;
-      } else {
-        var covered = distanceAtTimeFromSpeed(
-          Math.min(Math.max(0, localTime - meetTime), afterDuration),
-          remaining,
-          approachSpeed,
-          normalSpeed,
-          accel
-        );
-        boatArc = meetArc + covered;
-      }
-    }
-
-    return pathProgressAtArcDistance(arcData, boatArc);
-  }
-
   function boatPathProgressAtLocalTime(segment, localTime, entity, motionOpts) {
     if (hasBoatCatchPace(segment)) {
       return boatCatchPacePathProgress(segment, localTime);
@@ -3358,9 +3828,12 @@
     var settings = getSettings();
     var accel = kmhToMs(settings.boatAcceleration);
     var normalSpeed = Math.max(0.1, kmhToMs(settings.boatSpeed));
+    var entrySpeed = Math.max(0, segment.catchEntrySpeed || 0);
     var approachSpeed = segment.catchApproachSpeed != null
       ? segment.catchApproachSpeed
-      : cruiseSpeedForTravelTimeNoDecel(meetArc, meetTime, accel);
+      : (entrySpeed > 1e-6
+        ? cruiseSpeedForTravelTimeNoDecelFromSpeed(meetArc, meetTime, entrySpeed, accel)
+        : cruiseSpeedForTravelTimeNoDecel(meetArc, meetTime, accel));
 
     if (targetArc <= 0) return 0;
     if (targetArc >= arcData.total - 1e-8) {
@@ -3369,17 +3842,43 @@
 
     if (targetArc <= meetArc + 1e-8) {
       if (meetArc < 1e-8) return 0;
+      if (entrySpeed > 1e-6) {
+        return timeToCoverDistanceNoDecelFromSpeed(
+          meetArc,
+          targetArc,
+          entrySpeed,
+          approachSpeed,
+          accel
+        );
+      }
       return timeToCoverDistanceNoDecel(meetArc, targetArc, approachSpeed, accel);
     }
 
     var remaining = Math.max(0, arcData.total - meetArc);
     var need = targetArc - meetArc;
     if (remaining < 1e-8) return meetTime;
+    var afterSpeed = catchAfterPhaseSpeed(
+      remaining,
+      afterDuration,
+      approachSpeed,
+      normalSpeed,
+      accel,
+      !!segment.catchContinuesToNext
+    );
+    if (segment.catchContinuesToNext) {
+      return meetTime + timeToCoverDistanceNoDecelFromSpeed(
+        remaining,
+        need,
+        approachSpeed,
+        afterSpeed,
+        accel
+      );
+    }
     return meetTime + timeToCoverDistanceFromSpeed(
       remaining,
       need,
       approachSpeed,
-      normalSpeed,
+      afterSpeed,
       accel
     );
   }
@@ -3402,7 +3901,7 @@
     for (var i = 0; i < 24; i++) {
       var mid = (low + high) / 2;
       var pathProgress = segmentPathProgress(segment, mid, entity, motionOpts);
-      var arc = arcDistanceAtProgress(arcData, pathProgress);
+      var arc = arcDistanceFromPathProgress(arcData, pathProgress);
       if (arc < targetArc) low = mid;
       else high = mid;
     }
@@ -3422,7 +3921,7 @@
       holderEntity,
       motionOpts
     );
-    var boatArc = arcDistanceAtProgress(arcData, pathProgress);
+    var boatArc = arcDistanceFromPathProgress(arcData, pathProgress);
     var driveStart = getDribbleDriveStart(pathLength, throwDistance);
     if (boatArc >= driveStart) {
       return clone(boatPose);
@@ -3483,7 +3982,7 @@
       holderEntity,
       motionOpts
     );
-    var boatArc = arcDistanceAtProgress(arcData, pathProgress);
+    var boatArc = arcDistanceFromPathProgress(arcData, pathProgress);
     if (boatArc < catchArc) {
       return poseAtArcDistance(boatSegment, catchArc, arcData);
     }
@@ -3665,9 +4164,18 @@
     return isStepDurationTiming() || isBoatSpeedSyncArrival();
   }
 
-  function entityMoveDuration(start, end, entity) {
+  // Padlengte langs de curve (niet de koorde), zodat knikken via de diamond
+  // handle de vaartijd en dribbel-ticks meenemen.
+  function segmentTravelDistance(segment) {
+    if (!segment || !segment.startPose || !segment.endPose) return 0;
+    var arc = getSegmentArcData(segment).total;
+    if (arc > 1e-6) return arc;
+    return distanceMeters(segment.startPose, segment.endPose);
+  }
+
+  function entityMoveDuration(start, end, entity, travelDistance) {
     var settings = getSettings();
-    var distance = distanceMeters(start, end);
+    var distance = travelDistance != null ? travelDistance : distanceMeters(start, end);
     var speedKmh = entity && entity.type === 'ball' ? settings.ballSpeed : settings.boatSpeed;
     var moveTime = distance / Math.max(0.1, kmhToMs(speedKmh));
     if (entity && entity.type === 'ball') {
@@ -3686,24 +4194,30 @@
       if (!segment) return;
       var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
       if (!entity || entity.type !== 'boat') return;
-      var duration = entityMoveDuration(segment.startPose, segment.endPose, entity);
+      var duration = entityMoveDuration(
+        segment.startPose,
+        segment.endPose,
+        entity,
+        segmentTravelDistance(segment)
+      );
       if (duration > max) max = duration;
     });
     return max;
   }
 
-  function segmentDuration(start, end, entity, syncedBoatDuration) {
+  function segmentDuration(start, end, entity, syncedBoatDuration, travelDistance) {
     if (isStepDurationTiming()) {
       return Math.max(0.25, getSettings().stepDuration);
     }
     if (isBoatSpeedSyncArrival() && entity && entity.type === 'boat' && syncedBoatDuration > 0) {
       return Math.max(0.25, syncedBoatDuration);
     }
-    return entityMoveDuration(start, end, entity);
+    return entityMoveDuration(start, end, entity, travelDistance);
   }
 
-  function applyRouteDurations(routes) {
+  function applyRouteDurations(routes, stepIndex) {
     if (!routes) return routes;
+    if (stepIndex == null) stepIndex = state.tactic.currentStepIndex;
     var syncedBoatDuration = isBoatSpeedSyncArrival() ? boatSyncedStepDuration(routes) : 0;
     Object.keys(routes).forEach(function (entityId) {
       var segment = routes[entityId];
@@ -3711,11 +4225,15 @@
       var entity = state.tactic.entities.find(function (item) { return item.id === entityId; });
       clearBoatCatchPace(segment);
       segment.startTime = segment.startTime || 0;
+      var travelDist = entity && entity.type === 'boat'
+        ? segmentTravelDistance(segment)
+        : null;
       segment.endTime = segment.startTime + segmentDuration(
         segment.startPose,
         segment.endPose,
         entity,
-        syncedBoatDuration
+        syncedBoatDuration,
+        travelDist
       );
     });
     var ballSeg = routes.ball;
@@ -3735,33 +4253,56 @@
           var targetEntity = state.tactic.entities.find(function (item) {
             return item.id === ballSeg.syncToEntityId;
           });
+          var meetArc = ballSeg.syncArcDistance != null
+            ? ballSeg.syncArcDistance
+            : getSegmentArcData(targetSeg).total;
+          var entrySpeed = catchEntrySpeedForEntity(ballSeg.syncToEntityId, stepIndex);
+          var continuesToNext = entityContinuesToNextStep(ballSeg.syncToEntityId, stepIndex);
+          var continueOpts = entrySpeed > 1e-6
+            ? { continuesFromPrev: true, continuesToNext: continuesToNext }
+            : (continuesToNext ? { continuesFromPrev: false, continuesToNext: true } : null);
           var syncEnd = targetSeg.endTime;
           if (ballSeg.syncArcDistance != null) {
             syncEnd = localTimeAtArcDistance(
               targetSeg,
               ballSeg.syncArcDistance,
               targetEntity,
-              null,
+              continueOpts,
               targetSeg.endTime
             );
           }
-          if (syncEnd > travelDuration + 1e-6) {
+          // Sync-arrival comprimeert soms het pad tot onder fysieke tijd.
+          // Neem max(timeline, earliest met beginsnelheid uit vorige stap).
+          var paceSettings = getSettings();
+          var paceAccel = kmhToMs(paceSettings.boatAcceleration);
+          var paceSpeed = Math.max(0.1, kmhToMs(paceSettings.boatSpeed));
+          var earliestMeet = earliestBoatMeetTime(meetArc, paceSpeed, paceAccel, entrySpeed);
+          var boatMeetTime = Math.max(syncEnd, earliestMeet);
+
+          if (boatMeetTime > travelDuration + 1e-6) {
             // Speler is later op het meetpunt: bal wacht met gooien.
-            ballSeg.throwDelay = syncEnd - travelDuration;
-            ballSeg.endTime = syncEnd;
-          } else if (travelDuration > syncEnd + 1e-6) {
+            ballSeg.throwDelay = boatMeetTime - travelDuration;
+            ballSeg.endTime = boatMeetTime;
+            if (earliestMeet > syncEnd + 1e-6) {
+              // Timeline was te optimistisch; vaar met echte catch-pace naar het punt.
+              applyBoatCatchPace(targetSeg, meetArc, boatMeetTime, entrySpeed, continuesToNext);
+              ballSeg.throwDelay = Math.max(0, targetSeg.catchMeetTime - travelDuration);
+              ballSeg.endTime = targetSeg.catchMeetTime;
+            }
+          } else if (travelDuration > boatMeetTime + 1e-6) {
             // Bal is later: speler vaart langzaam naar het punt, daarna op normaal tempo door.
-            var meetArc = ballSeg.syncArcDistance != null
-              ? ballSeg.syncArcDistance
-              : getSegmentArcData(targetSeg).total;
-            applyBoatCatchPace(targetSeg, meetArc, travelDuration);
-            ballSeg.endTime = travelDuration;
+            applyBoatCatchPace(targetSeg, meetArc, travelDuration, entrySpeed, continuesToNext);
+            // Als catch-pace de meet-tijd moest oprekken, wacht de bal alsnog.
+            ballSeg.throwDelay = Math.max(0, targetSeg.catchMeetTime - travelDuration);
+            ballSeg.endTime = targetSeg.catchMeetTime;
           } else {
             ballSeg.endTime = travelDuration;
           }
         }
       }
     }
+    stretchContinuingBoatDurations(routes, stepIndex);
+    resyncSyncedBoatArrivals(routes);
     return routes;
   }
 
@@ -3800,24 +4341,17 @@
       return hermiteProgress(progress, 2, 0);
     }
 
-    var settings = getSettings();
-    var distance = distanceMeters(segment.startPose, segment.endPose);
-    var cruiseSpeedMs;
+    // Sync arrival: zelfde journey-fractie voor elke boot (booglengte), anders
+    // lopen scheve curves uit de pas terwijl de eindtijd wel gelijk is.
     if (usesSyncedArrivalTiming(entity)) {
-      var duration = Math.max(0.25, (segment.endTime || 0) - (segment.startTime || 0));
-      if (duration <= 0.25) {
-        duration = isStepDurationTiming()
-          ? Math.max(0.25, settings.stepDuration)
-          : entityMoveDuration(segment.startPose, segment.endPose, entity);
-      }
-      cruiseSpeedMs = distance / duration;
-    } else {
-      cruiseSpeedMs = kmhToMs(settings.boatSpeed);
+      return hermiteProgress(progress, 0, 0);
     }
+
+    var settings = getSettings();
     return motionPathProgress(
       progress,
-      distance,
-      cruiseSpeedMs,
+      segmentTravelDistance(segment),
+      kmhToMs(settings.boatSpeed),
       kmhToMs(settings.boatAcceleration)
     );
   }
@@ -3843,7 +4377,9 @@
         segment.catchMeetArc = routes[entityId].catchMeetArc;
         segment.catchMeetTime = routes[entityId].catchMeetTime;
         segment.catchApproachSpeed = routes[entityId].catchApproachSpeed;
+        segment.catchEntrySpeed = routes[entityId].catchEntrySpeed || 0;
         segment.catchAfterDuration = routes[entityId].catchAfterDuration;
+        segment.catchContinuesToNext = !!routes[entityId].catchContinuesToNext;
       } else {
         clearBoatCatchPace(segment);
       }
@@ -3867,7 +4403,7 @@
           var pathT = entity.type === 'ball'
             ? ballSegmentPathProgress(segment, localTime)
             : boatPathProgressAtLocalTime(segment, localTime, entity);
-          poses[entity.id] = poseAlongSegment(segment, pathT, entity);
+          poses[entity.id] = poseAlongPathProgress(segment, pathT, entity);
           break;
         }
         poses[entity.id] = poseAlongSegment(segment, 1, entity);
@@ -3878,30 +4414,34 @@
     return poses;
   }
 
-  function setMessage(text) {
+  function setMessage(text, options) {
+    var opts = options || {};
     state.message = text;
     var el = document.getElementById('message');
     if (!text) {
       el.classList.remove('is-visible');
+      el.classList.remove('is-emphasis');
       window.setTimeout(function () {
         if (state.message) return;
         el.classList.add('hidden');
         el.textContent = '';
+        el.classList.remove('is-emphasis');
       }, 180);
       return;
     }
     el.textContent = text;
+    el.classList.toggle('is-emphasis', !!opts.emphasis);
     el.classList.remove('hidden');
     // Force reflow so the enter transition runs when replacing text quickly.
     void el.offsetWidth;
     el.classList.add('is-visible');
+    var duration = opts.duration != null ? opts.duration : 2600;
     window.setTimeout(function () {
       if (state.message === text) setMessage(null);
-    }, 2600);
+    }, duration);
   }
 
   function persistTactic() {
-    if (state.isViewOnly) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state.tactic));
     } catch (err) {
@@ -3921,6 +4461,19 @@
 
   var EXPORT_FORMAT = 'flowboard-tactic';
   var EXPORT_VERSION = 1;
+  var SHARE_HASH_PREFIX = 'fb2.';
+  var SHARE_HASH_PREFIX_V1 = 'fb1.';
+  // Soft limit so links stay usable in browsers and common messengers.
+  var SHARE_URL_MAX_LENGTH = 4096;
+
+  var shareLinkState = {
+    key: null,
+    url: null,
+    usable: false,
+    reason: 'pending',
+    generation: 0,
+  };
+  var shareLinkRefreshTimer = null;
 
   function normalizeTacticName(value) {
     var name = String(value || '').trim();
@@ -3937,6 +4490,597 @@
     return base + '.flowboard.json';
   }
 
+  function buildTacticTransferPayload(name, options) {
+    var opts = options || {};
+    var normalized = normalizeTacticName(name || (state.tactic && state.tactic.name));
+    var tactic = clone(state.tactic);
+    tactic.name = normalized;
+    // Settings are local preferences; transfer only the playable flow.
+    delete tactic.settings;
+    var payload = {
+      format: EXPORT_FORMAT,
+      version: EXPORT_VERSION,
+      tactic: tactic,
+    };
+    if (opts.includeExportedAt) {
+      payload.exportedAt = new Date().toISOString();
+    }
+    return payload;
+  }
+
+  function supportsShareCompression() {
+    return typeof CompressionStream === 'function'
+      && typeof DecompressionStream === 'function'
+      && typeof TextEncoder === 'function'
+      && typeof TextDecoder === 'function'
+      && typeof btoa === 'function'
+      && typeof atob === 'function';
+  }
+
+  function bytesToBase64Url(bytes) {
+    var binary = '';
+    var chunk = 0x8000;
+    var i;
+    for (i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(
+        null,
+        bytes.subarray(i, Math.min(i + chunk, bytes.length))
+      );
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  function base64UrlToBytes(value) {
+    var str = String(value || '');
+    var pad = str.length % 4 === 0 ? '' : new Array(5 - (str.length % 4)).join('=');
+    var binary = atob(str.replace(/-/g, '+').replace(/_/g, '/') + pad);
+    var bytes = new Uint8Array(binary.length);
+    var i;
+    for (i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  function compressBytes(bytes) {
+    return new Response(
+      new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))
+    ).arrayBuffer().then(function (buffer) {
+      return new Uint8Array(buffer);
+    });
+  }
+
+  function decompressBytes(bytes) {
+    return new Response(
+      new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))
+    ).arrayBuffer().then(function (buffer) {
+      return new Uint8Array(buffer);
+    });
+  }
+
+  function pageUrlWithoutHash() {
+    return window.location.href.replace(/#.*$/, '');
+  }
+
+  function buildShareUrlFromPayloadJson(jsonText) {
+    var bytes = new TextEncoder().encode(jsonText);
+    return compressBytes(bytes).then(function (compressed) {
+      return pageUrlWithoutHash() + '#' + SHARE_HASH_PREFIX + bytesToBase64Url(compressed);
+    });
+  }
+
+  function parseShareHash(hash) {
+    var raw = String(hash || '');
+    if (raw.charAt(0) === '#') raw = raw.slice(1);
+    if (raw.indexOf(SHARE_HASH_PREFIX) === 0) {
+      return { version: 2, encoded: raw.slice(SHARE_HASH_PREFIX.length) || null };
+    }
+    if (raw.indexOf(SHARE_HASH_PREFIX_V1) === 0) {
+      return { version: 1, encoded: raw.slice(SHARE_HASH_PREFIX_V1.length) || null };
+    }
+    return null;
+  }
+
+  function roundShareNumber(value, digits) {
+    var num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    var factor = Math.pow(10, digits);
+    return Math.round(num * factor) / factor;
+  }
+
+  function packSharePose(pose) {
+    if (!pose) return null;
+    var out = [roundShareNumber(pose.x, 3), roundShareNumber(pose.y, 3)];
+    var rotation = roundShareNumber(pose.rotation || 0, 1);
+    if (rotation) out.push(rotation);
+    return out;
+  }
+
+  function unpackSharePose(value) {
+    if (!value) return null;
+    if (Array.isArray(value)) {
+      return {
+        x: Number(value[0]) || 0,
+        y: Number(value[1]) || 0,
+        rotation: Number(value[2]) || 0,
+      };
+    }
+    if (typeof value === 'object') {
+      return {
+        x: Number(value.x) || 0,
+        y: Number(value.y) || 0,
+        rotation: Number(value.rotation) || 0,
+      };
+    }
+    return null;
+  }
+
+  function shortShareEntityId(entityId) {
+    if (entityId === 'ball') return 'b';
+    var defense = /^boat-defense-(\d+)$/.exec(entityId);
+    if (defense) return 'd' + defense[1];
+    var attack = /^boat-attack-(\d+)$/.exec(entityId);
+    if (attack) return 'a' + attack[1];
+    return entityId;
+  }
+
+  function expandShareEntityId(shortId) {
+    if (!shortId || shortId === 'b') return 'ball';
+    if (shortId.charAt(0) === 'd' && /^\d+$/.test(shortId.slice(1))) {
+      return 'boat-defense-' + shortId.slice(1);
+    }
+    if (shortId.charAt(0) === 'a' && /^\d+$/.test(shortId.slice(1))) {
+      return 'boat-attack-' + shortId.slice(1);
+    }
+    return shortId;
+  }
+
+  function posesAlmostEqual(a, b) {
+    if (!a || !b) return false;
+    return Math.abs((a.x || 0) - (b.x || 0)) < 1e-6
+      && Math.abs((a.y || 0) - (b.y || 0)) < 1e-6
+      && Math.abs((a.rotation || 0) - (b.rotation || 0)) < 1e-3;
+  }
+
+  function packShareRoute(route, prevPose, stepPose) {
+    if (!route || typeof route !== 'object') return null;
+    var out = {};
+    var startTime = Number(route.startTime) || 0;
+    var endTime = route.endTime == null ? null : Number(route.endTime);
+    if (startTime) out.a = roundShareNumber(startTime, 3);
+    if (endTime != null) out.b = roundShareNumber(endTime, 3);
+    if (route.startPose && !posesAlmostEqual(route.startPose, prevPose)) {
+      out.s = packSharePose(route.startPose);
+    }
+    if (route.endPose && !posesAlmostEqual(route.endPose, stepPose)) {
+      out.e = packSharePose(route.endPose);
+    }
+    if (route.controlOut) {
+      out.o = [
+        roundShareNumber(route.controlOut.x, 3),
+        roundShareNumber(route.controlOut.y, 3),
+      ];
+    }
+    if (route.controlIn) {
+      out.i = [
+        roundShareNumber(route.controlIn.x, 3),
+        roundShareNumber(route.controlIn.y, 3),
+      ];
+    }
+    if (route.passType) out.p = route.passType;
+    if (route.targetEntityId) out.g = shortShareEntityId(route.targetEntityId);
+    if (route.syncToEntityId) out.y = shortShareEntityId(route.syncToEntityId);
+    if (route.syncArcDistance != null) out.A = roundShareNumber(route.syncArcDistance, 3);
+    if (route.throwDelay) out.D = roundShareNumber(route.throwDelay, 3);
+    if (route.travelDuration != null) {
+      var expected = endTime == null ? null : Math.max(0, endTime - startTime);
+      if (expected == null || Math.abs(Number(route.travelDuration) - expected) > 1e-6) {
+        out.T = roundShareNumber(route.travelDuration, 3);
+      }
+    }
+    return out;
+  }
+
+  function unpackShareRoute(packed, prevPose, stepPose) {
+    if (!packed || typeof packed !== 'object') return null;
+    var startTime = Number(packed.a) || 0;
+    var endTime = packed.b == null ? startTime : Number(packed.b);
+    var startPose = unpackSharePose(packed.s) || (prevPose ? clone(prevPose) : null);
+    var endPose = unpackSharePose(packed.e) || (stepPose ? clone(stepPose) : null);
+    if (!startPose || !endPose) return null;
+    var route = {
+      startTime: startTime,
+      endTime: endTime,
+      startPose: startPose,
+      endPose: endPose,
+      controlOut: null,
+      controlIn: null,
+    };
+    if (Array.isArray(packed.o) && packed.o.length >= 2) {
+      route.controlOut = { x: Number(packed.o[0]) || 0, y: Number(packed.o[1]) || 0 };
+    }
+    if (Array.isArray(packed.i) && packed.i.length >= 2) {
+      route.controlIn = { x: Number(packed.i[0]) || 0, y: Number(packed.i[1]) || 0 };
+    }
+    if (packed.p || packed.g || packed.y || packed.A != null || packed.D || packed.T != null) {
+      route.passType = packed.p || null;
+      route.targetEntityId = packed.g ? expandShareEntityId(packed.g) : null;
+      route.syncToEntityId = packed.y ? expandShareEntityId(packed.y) : null;
+      route.syncArcDistance = packed.A == null ? null : Number(packed.A);
+      route.throwDelay = Number(packed.D) || 0;
+      route.travelDuration = packed.T != null
+        ? Number(packed.T)
+        : Math.max(0, endTime - startTime);
+    }
+    return route;
+  }
+
+  function packSharePoseMap(poses) {
+    var out = {};
+    if (!poses) return out;
+    Object.keys(poses).forEach(function (entityId) {
+      out[shortShareEntityId(entityId)] = packSharePose(poses[entityId]);
+    });
+    return out;
+  }
+
+  function unpackSharePoseMap(packed) {
+    var out = {};
+    if (!packed) return out;
+    Object.keys(packed).forEach(function (shortId) {
+      var pose = unpackSharePose(packed[shortId]);
+      if (pose) out[expandShareEntityId(shortId)] = pose;
+    });
+    return out;
+  }
+
+  function packTacticForShare(tactic) {
+    var source = tactic || state.tactic;
+    var entities = [];
+    (source.entities || []).forEach(function (entity) {
+      if (!entity || entity.type !== 'boat') return;
+      var teamCode = entity.team === 'attack' ? 1 : 0;
+      var number = parseInt(entity.label, 10);
+      if (!Number.isFinite(number)) {
+        var match = /-(\d+)$/.exec(entity.id || '');
+        number = match ? parseInt(match[1], 10) : entities.length + 1;
+      }
+      entities.push([teamCode, number]);
+    });
+
+    var prevPoses = {};
+    var steps = (source.steps || []).map(function (step, index) {
+      var poses = step.poses || {};
+      var packedPoses = {};
+      Object.keys(poses).forEach(function (entityId) {
+        if (posesAlmostEqual(poses[entityId], prevPoses[entityId])) return;
+        packedPoses[shortShareEntityId(entityId)] = packSharePose(poses[entityId]);
+      });
+      var packedRoutes = null;
+      if (step.routes && typeof step.routes === 'object') {
+        packedRoutes = {};
+        Object.keys(step.routes).forEach(function (entityId) {
+          var packedRoute = packShareRoute(step.routes[entityId], prevPoses[entityId], poses[entityId]);
+          if (packedRoute) packedRoutes[shortShareEntityId(entityId)] = packedRoute;
+        });
+        if (!Object.keys(packedRoutes).length) packedRoutes = null;
+      }
+      var packedStep = {};
+      if (Object.keys(packedPoses).length) packedStep.p = packedPoses;
+      if (packedRoutes) packedStep.r = packedRoutes;
+      if (step.name && !isDefaultStepName(step.name, index)) packedStep.n = step.name;
+      if (step.ballHolderId) packedStep.h = shortShareEntityId(step.ballHolderId);
+      prevPoses = poses;
+      return packedStep;
+    });
+
+    var packed = {
+      n: normalizeTacticName(source.name),
+      e: entities,
+      s: steps,
+    };
+    if (source.currentStepIndex) packed.c = source.currentStepIndex;
+    if (source.startPositions && typeof source.startPositions === 'object') {
+      packed.S = packSharePoseMap(source.startPositions);
+    }
+    return packed;
+  }
+
+  function unpackTacticFromShare(packed) {
+    if (!packed || typeof packed !== 'object' || !Array.isArray(packed.s)) return null;
+    var settings = defaultSettings();
+    var defenseCount = 0;
+    var attackCount = 0;
+    var entities = [];
+    (packed.e || []).forEach(function (entry) {
+      if (!Array.isArray(entry) || entry.length < 2) return;
+      var team = entry[0] === 1 ? 'attack' : 'defense';
+      var number = parseInt(entry[1], 10);
+      if (!Number.isFinite(number) || number < 1) return;
+      if (team === 'attack') attackCount += 1;
+      else defenseCount += 1;
+      var colors = team === 'attack' ? settings.attack.colors.slice() : settings.defense.colors.slice();
+      entities.push({
+        id: team === 'attack' ? 'boat-attack-' + number : 'boat-defense-' + number,
+        type: 'boat',
+        team: team,
+        label: String(number),
+        color: colors[0],
+        colors: colors,
+        initial: { x: 0, y: 0, rotation: 0 },
+      });
+    });
+    entities.push({
+      id: 'ball',
+      type: 'ball',
+      team: 'neutral',
+      label: t('entity.ball'),
+      color: '#ffffff',
+      colors: ['#ffffff'],
+      initial: { x: HALF_LENGTH, y: FIELD_WIDTH / 2, rotation: 0 },
+    });
+    settings.defense.boatCount = Math.max(1, defenseCount || settings.defense.boatCount);
+    settings.attack.boatCount = Math.max(1, attackCount || settings.attack.boatCount);
+    settings.showDefense = defenseCount > 0;
+    settings.showAttack = attackCount > 0;
+
+    var prevPoses = {};
+    var steps = packed.s.map(function (step, index) {
+      var poses = {};
+      Object.keys(prevPoses).forEach(function (entityId) {
+        poses[entityId] = clone(prevPoses[entityId]);
+      });
+      var delta = unpackSharePoseMap(step && step.p);
+      Object.keys(delta).forEach(function (entityId) {
+        poses[entityId] = delta[entityId];
+      });
+      var routes = null;
+      if (step && step.r && typeof step.r === 'object') {
+        routes = {};
+        Object.keys(step.r).forEach(function (shortId) {
+          var entityId = expandShareEntityId(shortId);
+          var route = unpackShareRoute(step.r[shortId], prevPoses[entityId], poses[entityId]);
+          if (route) routes[entityId] = route;
+        });
+        if (!Object.keys(routes).length) routes = null;
+      }
+      prevPoses = poses;
+      return {
+        id: uuid(),
+        name: (step && step.n) || stepNameForIndex(index),
+        poses: poses,
+        routes: routes,
+        ballHolderId: step && step.h ? expandShareEntityId(step.h) : null,
+      };
+    });
+
+    if (steps[0] && steps[0].poses) {
+      entities.forEach(function (entity) {
+        if (steps[0].poses[entity.id]) entity.initial = clone(steps[0].poses[entity.id]);
+      });
+    }
+
+    var now = new Date().toISOString();
+    return {
+      id: uuid(),
+      name: normalizeTacticName(packed.n),
+      sport: 'canoe-polo',
+      field: {
+        sport: 'canoe-polo',
+        width: FIELD_LENGTH,
+        height: FIELD_WIDTH,
+        goalWidth: GOAL_WIDTH,
+      },
+      settings: settings,
+      entities: entities,
+      tracks: entities.map(function (entity) {
+        return { entityId: entity.id, segments: [] };
+      }),
+      interactions: [],
+      duration: 12,
+      createdAt: now,
+      updatedAt: now,
+      startPositions: packed.S ? unpackSharePoseMap(packed.S) : null,
+      steps: steps,
+      currentStepIndex: Number(packed.c) || 0,
+    };
+  }
+
+  function decodeSharePayload(shareRef) {
+    if (!shareRef || !shareRef.encoded || !supportsShareCompression()) {
+      return Promise.resolve(null);
+    }
+    try {
+      var compressed = base64UrlToBytes(shareRef.encoded);
+      return decompressBytes(compressed).then(function (bytes) {
+        var text = new TextDecoder().decode(bytes);
+        var data = JSON.parse(text);
+        if (shareRef.version === 2 || (data && Array.isArray(data.s) && Array.isArray(data.e))) {
+          return unpackTacticFromShare(data);
+        }
+        return parseTacticImportPayload(data);
+      }).catch(function () {
+        return null;
+      });
+    } catch (err) {
+      return Promise.resolve(null);
+    }
+  }
+
+  function shareLinkCacheKey() {
+    if (!hasPlayableSteps()) return '';
+    return JSON.stringify(packTacticForShare(state.tactic));
+  }
+
+  function updateShareCopyButton() {
+    var copyBtn = document.getElementById('btn-share-copy-url');
+    if (!copyBtn) return;
+    var usable = !!shareLinkState.usable && !!shareLinkState.url;
+    copyBtn.disabled = !usable;
+    var label = t('share.copyUrl');
+    var title = t('share.copyUrl.title');
+    if (!usable) {
+      if (shareLinkState.reason === 'unsupported') {
+        label = t('settings.share.unsupported');
+        title = label;
+      } else if (shareLinkState.reason === 'tooLong') {
+        label = t('settings.share.tooLong');
+        title = label;
+      } else if (shareLinkState.reason === 'pending') {
+        label = t('share.copyUrl.pending');
+        title = label;
+      } else {
+        title = label;
+      }
+    }
+    copyBtn.textContent = label;
+    copyBtn.title = title;
+  }
+
+  function updateShareButton() {
+    var shareBtn = document.getElementById('btn-share-tactic');
+    if (!shareBtn) return;
+    var playable = hasPlayableSteps();
+    shareBtn.classList.toggle('hidden', !playable);
+    shareBtn.disabled = !playable;
+    shareBtn.title = withShortcut(t('settings.share'), modShortcutLabel() + '+S');
+    shareBtn.setAttribute('aria-label', shareBtn.title);
+    updateShareCopyButton();
+  }
+
+  function applyShareLinkState(next) {
+    shareLinkState.key = next.key;
+    shareLinkState.url = next.url;
+    shareLinkState.usable = !!next.usable;
+    shareLinkState.reason = next.reason || 'pending';
+    updateShareButton();
+  }
+
+  function refreshShareLink() {
+    var key = shareLinkCacheKey();
+    if (!key) {
+      applyShareLinkState({ key: '', url: null, usable: false, reason: 'empty' });
+      return;
+    }
+    if (shareLinkState.key === key && shareLinkState.reason !== 'pending') {
+      updateShareButton();
+      return;
+    }
+    if (!supportsShareCompression()) {
+      applyShareLinkState({ key: key, url: null, usable: false, reason: 'unsupported' });
+      return;
+    }
+    var generation = shareLinkState.generation + 1;
+    shareLinkState.generation = generation;
+    shareLinkState.key = key;
+    shareLinkState.reason = 'pending';
+    shareLinkState.usable = false;
+    shareLinkState.url = null;
+    updateShareButton();
+    buildShareUrlFromPayloadJson(key).then(function (url) {
+      if (generation !== shareLinkState.generation || shareLinkState.key !== key) return;
+      if (url.length > SHARE_URL_MAX_LENGTH) {
+        applyShareLinkState({ key: key, url: null, usable: false, reason: 'tooLong' });
+        return;
+      }
+      applyShareLinkState({ key: key, url: url, usable: true, reason: 'ok' });
+    }).catch(function () {
+      if (generation !== shareLinkState.generation || shareLinkState.key !== key) return;
+      applyShareLinkState({ key: key, url: null, usable: false, reason: 'unsupported' });
+    });
+  }
+
+  function scheduleShareLinkRefresh() {
+    if (shareLinkRefreshTimer) {
+      window.clearTimeout(shareLinkRefreshTimer);
+      shareLinkRefreshTimer = null;
+    }
+    shareLinkRefreshTimer = window.setTimeout(function () {
+      shareLinkRefreshTimer = null;
+      refreshShareLink();
+    }, 40);
+  }
+
+  function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.left = '-9999px';
+      document.body.appendChild(area);
+      area.select();
+      try {
+        if (!document.execCommand('copy')) reject(new Error('copy failed'));
+        else resolve();
+      } catch (err) {
+        reject(err);
+      } finally {
+        document.body.removeChild(area);
+      }
+    });
+  }
+
+  function isShareDialogOpen() {
+    var backdrop = document.getElementById('share-backdrop');
+    return backdrop && !backdrop.classList.contains('hidden');
+  }
+
+  function closeShareDialog() {
+    var backdrop = document.getElementById('share-backdrop');
+    if (backdrop) backdrop.classList.add('hidden');
+  }
+
+  function openShareDialog() {
+    if (!hasPlayableSteps()) return;
+    closeExportDialog();
+    closePredefinedDialog();
+    closeShortcutsDialog();
+    state.settingsOpen = false;
+    renderSettings();
+    var backdrop = document.getElementById('share-backdrop');
+    if (!backdrop) return;
+    scheduleShareLinkRefresh();
+    updateShareCopyButton();
+    backdrop.classList.remove('hidden');
+  }
+
+  function shareTacticLink() {
+    if (!shareLinkState.usable || !shareLinkState.url) return;
+    copyTextToClipboard(shareLinkState.url).then(function () {
+      closeShareDialog();
+      setMessage(t('message.shareSuccess'), { emphasis: true, duration: 4000 });
+    }).catch(function () {
+      setMessage(t('message.shareError'));
+    });
+  }
+
+  function exportTacticFromShare() {
+    closeShareDialog();
+    exportTactic();
+  }
+
+  function consumeShareHashIfPresent() {
+    var shareRef = parseShareHash(window.location.hash);
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+    if (!shareRef || !shareRef.encoded) return;
+    decodeSharePayload(shareRef).then(function (raw) {
+      if (!raw) {
+        setMessage(t('message.shareLoadError'));
+        return;
+      }
+      if (!confirmReplaceTactic('confirm.shareOverwrite')) return;
+      applyImportedTactic(raw);
+      setMessage(t('message.shareLoaded', {
+        name: (state.tactic && state.tactic.name) || t('tactic.defaultName'),
+      }));
+      renderAll();
+    });
+  }
+
   function isExportDialogOpen() {
     var backdrop = document.getElementById('export-backdrop');
     return backdrop && !backdrop.classList.contains('hidden');
@@ -3946,6 +5090,7 @@
     var backdrop = document.getElementById('export-backdrop');
     var input = document.getElementById('export-name-input');
     if (!backdrop || !input) return;
+    closeShareDialog();
     closePredefinedDialog();
     input.value = state.tactic.name || t('tactic.defaultName');
     backdrop.classList.remove('hidden');
@@ -3976,20 +5121,12 @@
   }
 
   function performExportTactic(name) {
-    var normalized = normalizeTacticName(name);
-    var tactic = clone(state.tactic);
-    tactic.name = normalized;
-    var payload = {
-      format: EXPORT_FORMAT,
-      version: EXPORT_VERSION,
-      exportedAt: new Date().toISOString(),
-      tactic: tactic,
-    };
+    var payload = buildTacticTransferPayload(name, { includeExportedAt: true });
     var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
     var link = document.createElement('a');
     link.href = url;
-    link.download = tacticExportFilename(normalized);
+    link.download = tacticExportFilename(payload.tactic.name);
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -4010,9 +5147,19 @@
     stopPlayback();
     state.startPoseEdit = false;
     if (state.playbackMode) exitPlaybackMode();
+    var previousSettings = state.tactic && state.tactic.settings
+      ? clone(state.tactic.settings)
+      : null;
     state.tactic = migrateTactic(raw);
     state.tactic.id = uuid();
     state.tactic.updatedAt = new Date().toISOString();
+    // Keep local settings; imported files may omit them or carry legacy settings.
+    if (previousSettings) {
+      state.tactic.settings = previousSettings;
+      applyTeamColors('attack');
+      applyTeamColors('defense');
+      recomputeAllSegmentDurations();
+    }
     applyStepDiagram(state.tactic.currentStepIndex);
     state.currentTime = 0;
     state.history = { past: [], future: [] };
@@ -4022,7 +5169,7 @@
   }
 
   function importTacticFromFile(file) {
-    if (!file || state.isViewOnly) return;
+    if (!file) return;
     var reader = new FileReader();
     reader.onload = function () {
       try {
@@ -4420,14 +5567,15 @@
     ctx.translate(pose.x, pose.y);
     ctx.rotate((pose.rotation * Math.PI) / 180);
 
+    // colors[0]=primary/bow (or full hull); colors[1]=secondary/stern
     traceBoatHull(ctx);
-    ctx.fillStyle = colors[0];
+    ctx.fillStyle = colors.length >= 2 ? colors[1] : colors[0];
     ctx.fill();
     if (colors.length >= 2) {
       ctx.save();
       traceBoatHull(ctx);
       ctx.clip();
-      ctx.fillStyle = colors[1];
+      ctx.fillStyle = colors[0];
       ctx.fillRect(BOAT_COLOR_SPLIT_X * fieldScale, -width * 2, width * 4, width * 4);
       ctx.restore();
     }
@@ -4615,13 +5763,6 @@
       drawSmallBallMarker(poseAtArcDistance(boatSegment, dist, arcData));
       dist += throwDistance;
     }
-  }
-
-  function drawBallHolderIndicator(pose) {
-    var canvasPose = metersToCanvas(pose);
-    var radius = Math.max(5, fieldScale * 0.14);
-    var offset = Math.max(8, fieldScale * 0.22);
-    drawBallFace(canvasPose.x + offset, canvasPose.y - offset, radius, false);
   }
 
   function drawPassTargetHighlights() {
@@ -4939,7 +6080,6 @@
       if (String(option.value) === String(value)) opt.selected = true;
       select.appendChild(opt);
     });
-    select.disabled = state.isViewOnly;
     select.addEventListener('change', function () { onChange(select.value); });
     row.appendChild(lab);
     row.appendChild(select);
@@ -4952,7 +6092,6 @@
     var input = document.createElement('input');
     input.type = 'checkbox';
     input.checked = !!checked;
-    input.disabled = state.isViewOnly;
     var lab = document.createElement('label');
     lab.textContent = label;
     input.addEventListener('change', function () { onChange(input.checked); });
@@ -4973,7 +6112,6 @@
     input.max = String(max);
     if (step != null) input.step = String(step);
     input.value = String(value);
-    input.disabled = state.isViewOnly;
     input.addEventListener('change', function () {
       onChange(clamp(Number(input.value) || min, min, max));
     });
@@ -4994,12 +6132,11 @@
     var toggle = document.createElement('input');
     toggle.type = 'checkbox';
     toggle.checked = !!enabled;
-    toggle.disabled = state.isViewOnly;
     toggle.setAttribute('aria-label', title);
     var headingLabel = document.createElement('label');
     headingLabel.textContent = title;
     toggle.addEventListener('change', function () {
-      recordHistory();
+      clearHistory();
       if (teamKey === 'attack') {
         getSettings().showAttack = toggle.checked;
       } else {
@@ -5020,7 +6157,7 @@
         { value: '1-3-1', label: '1-3-1' },
         { value: '1-2-2', label: '1-2-2' },
       ], function (value) {
-        recordHistory();
+        clearHistory();
         getSettings().defenseFormation = value;
         applyFormationReset(state.tactic);
         renderAll();
@@ -5030,7 +6167,7 @@
         { value: 'midline', label: t('settings.formation.midline') },
         { value: 'fan', label: t('settings.formation.fan') },
       ], function (value) {
-        recordHistory();
+        clearHistory();
         getSettings().attackFormation = value;
         applyFormationReset(state.tactic);
         renderAll();
@@ -5038,7 +6175,7 @@
     }
 
     section.appendChild(createNumber(t('settings.boatCount'), team.boatCount, 1, 10, function (value) {
-      recordHistory();
+      clearHistory();
       getSettings()[teamKey].boatCount = value;
       applyFormationReset(state.tactic);
       renderAll();
@@ -5051,14 +6188,13 @@
 
     var colorRow = document.createElement('div');
     colorRow.className = 'color-row';
+    // Primary (bow) left, secondary (stern) right.
     team.colors.forEach(function (color, index) {
       var input = document.createElement('input');
       input.type = 'color';
       input.value = toColorInput(color);
-      input.disabled = state.isViewOnly;
-      input.title = t('settings.color', { n: index + 1 });
+      input.title = index === 0 ? t('settings.primaryColor') : t('settings.secondaryColor');
       input.addEventListener('input', function () {
-        recordHistory();
         getSettings()[teamKey].colors[index] = input.value;
         applyTeamColors(teamKey);
         renderAll();
@@ -5071,9 +6207,7 @@
       addBtn.type = 'button';
       addBtn.className = 'btn';
       addBtn.textContent = t('settings.addColor');
-      addBtn.disabled = state.isViewOnly;
       addBtn.addEventListener('click', function () {
-        recordHistory();
         getSettings()[teamKey].colors.push(teamKey === 'attack' ? '#facc15' : '#f8fafc');
         applyTeamColors(teamKey);
         renderAll();
@@ -5084,9 +6218,7 @@
       removeBtn.type = 'button';
       removeBtn.className = 'btn';
       removeBtn.textContent = t('settings.removeColor');
-      removeBtn.disabled = state.isViewOnly;
       removeBtn.addEventListener('click', function () {
-        recordHistory();
         getSettings()[teamKey].colors = [getSettings()[teamKey].colors[0]];
         applyTeamColors(teamKey);
         renderAll();
@@ -5150,25 +6282,21 @@
       { value: 'half', label: t('settings.field.half') },
       { value: 'full', label: t('settings.field.full') },
     ], function (value) {
-      recordHistory();
       getSettings().fieldMode = value;
       state.tactic.updatedAt = new Date().toISOString();
       renderAll();
     }));
     fieldSection.appendChild(createCheckbox(t('settings.line4m'), settings.showLine4m, function (checked) {
-      recordHistory();
       getSettings().showLine4m = checked;
       state.tactic.updatedAt = new Date().toISOString();
       renderAll();
     }));
     fieldSection.appendChild(createCheckbox(t('settings.line6m'), settings.showLine6m, function (checked) {
-      recordHistory();
       getSettings().showLine6m = checked;
       state.tactic.updatedAt = new Date().toISOString();
       renderAll();
     }));
     fieldSection.appendChild(createCheckbox(t('settings.showNumbers'), settings.showNumbers, function (checked) {
-      recordHistory();
       getSettings().showNumbers = checked;
       state.tactic.updatedAt = new Date().toISOString();
       renderAll();
@@ -5179,10 +6307,35 @@
 
     var motionSection = document.createElement('section');
     motionSection.className = 'settings-section';
-    motionSection.innerHTML = '<h3>' + t('settings.advanced') + '</h3>';
+
+    var motionHeading = document.createElement('div');
+    motionHeading.className = 'settings-section-heading';
+    var motionTitle = document.createElement('h3');
+    motionTitle.className = 'settings-section-title';
+    motionTitle.textContent = t('settings.advanced');
+    motionHeading.appendChild(motionTitle);
+    var restoreMotionBtn = document.createElement('button');
+    restoreMotionBtn.type = 'button';
+    restoreMotionBtn.className = 'btn';
+    restoreMotionBtn.textContent = t('settings.restoreDefaults');
+    restoreMotionBtn.addEventListener('click', function () {
+      var defaults = defaultSettings();
+      var next = getSettings();
+      next.motionTimingMode = defaults.motionTimingMode;
+      next.boatSpeedSyncArrival = defaults.boatSpeedSyncArrival;
+      next.stepDuration = defaults.stepDuration;
+      next.boatSpeed = defaults.boatSpeed;
+      next.boatAcceleration = defaults.boatAcceleration;
+      next.boatRotationSpeed = defaults.boatRotationSpeed;
+      next.ballSpeed = defaults.ballSpeed;
+      recomputeAllSegmentDurations();
+      state.tactic.updatedAt = new Date().toISOString();
+      renderAll();
+    });
+    motionHeading.appendChild(restoreMotionBtn);
+    motionSection.appendChild(motionHeading);
 
     function updateMotionSetting(key, value) {
-      recordHistory();
       getSettings()[key] = value;
       recomputeAllSegmentDurations();
       state.tactic.updatedAt = new Date().toISOString();
@@ -5776,26 +6929,21 @@
 
     var keptRotation = segment.endPose.rotation;
 
+    // controlOut blijft staan (starttangent); controlIn schuift mee met het eindpunt
+    // zodat de bochtvorm behouden blijft — niet herbouwen via boatRouteControls,
+    // want na een vrije knik kan controlIn ver liggen en gaf max(μ,λ) een S-bocht.
     if (hasRouteControls(segment)) {
-      // Start- én eindtangent vasthouden.
       var existing = resolveRouteControls(segment);
-      var mu = existing
-        ? distanceMeters(existing.controlOut, segment.startPose)
-        : distanceMeters(segment.startPose, endPose) / 3;
-      var lambda = existing
-        ? distanceMeters(existing.controlIn, segment.endPose)
-        : mu;
-      var scale = Math.max(mu, lambda, 0.05);
-      applyRouteControls(
-        segment,
-        boatRouteControls(
-          segment.startPose,
-          endPose,
-          segment.startPose.rotation,
-          keptRotation,
-          scale
-        )
-      );
+      if (existing) {
+        var endDelta = posePositionDelta(endPose, segment.endPose);
+        applyRouteControls(segment, {
+          controlOut: existing.controlOut,
+          controlIn: {
+            x: existing.controlIn.x + endDelta.dx,
+            y: existing.controlIn.y + endDelta.dy,
+          },
+        });
+      }
     }
 
     segment.endPose.x = endPose.x;
@@ -5892,6 +7040,7 @@
     );
     retargetBallRouteForLinkedBoat(entityId);
     recomputeAllSegmentDurations();
+    updateBallClaimOnRoute(entityId, segment.endPose);
     state.tactic.updatedAt = new Date().toISOString();
   }
 
@@ -5919,6 +7068,7 @@
     );
     retargetBallRouteForLinkedBoat(entityId);
     recomputeAllSegmentDurations();
+    updateBallClaimOnRoute(entityId, segment.endPose);
     state.tactic.updatedAt = new Date().toISOString();
     renderAll();
   }
@@ -5965,16 +7115,9 @@
   }
 
   function setupCanvasDrag() {
-    var longPressTimer = null;
-    var longPress = null;
-
-    function clearLongPress() {
-      if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
-      }
-      longPress = null;
-    }
+    // Double-tap/klik op de knik-handle reset de bocht (ook op touch, naast dblclick).
+    var lastBendTap = null;
+    var bendResetAt = 0;
 
     function releaseCapture(event) {
       canvas.classList.remove('dragging');
@@ -5985,7 +7128,6 @@
       var pending = state.pendingPointer;
       if (!pending || pending.kind === 'select') return false;
 
-      clearLongPress();
       collapseStepsSheet();
       state.pendingPointer = null;
 
@@ -6005,6 +7147,13 @@
           previousHolderId: getBallHolderId(),
           ballRefPose: clone(getBallStartPose()),
         };
+        // Til de bal los van de holder zodat hij zichtbaar meesleept.
+        if (freestyleEntity && freestyleEntity.type === 'ball') {
+          setBallHolderId(null);
+          freestyleEntity.initial.x = state.drag.ballRefPose.x;
+          freestyleEntity.initial.y = state.drag.ballRefPose.y;
+          freestyleEntity.initial.rotation = 0;
+        }
       } else if (pending.kind === 'ghost') {
         recordHistory();
         state.drag = {
@@ -6064,6 +7213,12 @@
         entity.initial.x = freestylePose.x;
         entity.initial.y = freestylePose.y;
         entity.initial.rotation = freestylePose.rotation;
+        if (entity.type === 'ball') {
+          setBallHolderId(null);
+          entity.initial.rotation = 0;
+          renderCanvas();
+          return;
+        }
         if (entity.type === 'boat' && retargetBallRouteForLinkedBoat(state.drag.entityId)) {
           recomputeAllSegmentDurations();
         }
@@ -6134,7 +7289,6 @@
       var point = pointerToCanvas(event);
       var x = point.x;
       var y = point.y;
-      clearLongPress();
 
       if (state.tool) {
         collapseStepsSheet();
@@ -6156,26 +7310,25 @@
         if (bendEntityId) {
           clearTool();
           collapseStepsSheet();
+          var now = Date.now();
+          if (
+            lastBendTap
+            && lastBendTap.entityId === bendEntityId
+            && now - lastBendTap.time <= DOUBLE_TAP_MS
+            && Math.hypot(x - lastBendTap.x, y - lastBendTap.y) <= DOUBLE_TAP_SLOP_PX
+          ) {
+            lastBendTap = null;
+            bendResetAt = now;
+            state.drag = null;
+            canvas.classList.remove('dragging');
+            resetSegmentBend(bendEntityId);
+            return;
+          }
           state.drag = {
             mode: 'bend',
             entityId: bendEntityId,
             historyRecorded: false,
           };
-          longPress = {
-            entityId: bendEntityId,
-            x: x,
-            y: y,
-            pointerId: event.pointerId,
-          };
-          longPressTimer = setTimeout(function () {
-            if (!longPress || longPress.entityId !== bendEntityId) return;
-            if (!state.drag || state.drag.mode !== 'bend' || state.drag.entityId !== bendEntityId) return;
-            state.drag = null;
-            canvas.classList.remove('dragging');
-            try { canvas.releasePointerCapture(longPress.pointerId); } catch (err) { /* noop */ }
-            clearLongPress();
-            resetSegmentBend(bendEntityId);
-          }, LONG_PRESS_MS);
           canvas.classList.add('dragging');
           canvas.setPointerCapture(event.pointerId);
           renderCanvas();
@@ -6229,7 +7382,9 @@
       if (state.startPoseEdit) {
         var freestyleEntity = state.tactic.entities.find(function (item) { return item.id === entityId; });
         if (!freestyleEntity) return;
-        var pose = freestyleEntity.initial;
+        var pose = freestyleEntity.type === 'ball'
+          ? getBallStartPose()
+          : freestyleEntity.initial;
         var grabMeters = canvasToMeters(x, y, pose.rotation);
         state.pendingPointer = {
           kind: 'freestyle',
@@ -6288,13 +7443,6 @@
     }
 
     function onPointerMove(event) {
-      if (longPress) {
-        var lpPoint = pointerToCanvas(event);
-        if (Math.hypot(lpPoint.x - longPress.x, lpPoint.y - longPress.y) >= LONG_PRESS_MOVE_PX) {
-          clearLongPress();
-        }
-      }
-
       if (state.tool) {
         updateToolPreview(pointerToCanvas(event));
         return;
@@ -6319,7 +7467,6 @@
     }
 
     function onPointerUp(event) {
-      clearLongPress();
       if (state.tool && state.tool.confirmOnUp) {
         var confirmPoint = pointerToCanvas(event);
         var aimMoved = state.tool.aimStartX != null
@@ -6337,6 +7484,14 @@
         state.pendingPointer = null;
         releaseCapture(event);
         if (state.startPoseEdit && pending.kind === 'freestyle') {
+          var pendingEntity = state.tactic.entities.find(function (item) {
+            return item.id === pending.entityId;
+          });
+          if (pendingEntity && pendingEntity.type === 'ball') {
+            setKeyboardFocus('ball');
+            renderAll();
+            return;
+          }
           beginStartPoseRotate(pending.entityId);
           return;
         }
@@ -6366,6 +7521,11 @@
           restoreBallSnapPreview(drag);
           state.drag = null;
           releaseCapture(event);
+          if (entity && entity.type === 'ball') {
+            setKeyboardFocus('ball');
+            renderAll();
+            return;
+          }
           beginStartPoseRotate(drag.entityId);
           return;
         }
@@ -6384,15 +7544,18 @@
             restoreBallSnapPreview(drag);
             recordHistory();
           }
-          entity.initial.x = freestylePose.x;
-          entity.initial.y = freestylePose.y;
-          entity.initial.rotation = freestylePose.rotation;
-          if (entity.type === 'boat') retargetBallRouteForLinkedBoat(drag.entityId);
-          syncCurrentStepPoses();
-          if (!claimBallPossessionImmediate(drag.entityId, freestylePose, drag.ballRefPose)) {
-            restoreBallSnapPreview(drag);
-            syncCurrentStepPoses();
+          if (entity.type === 'ball') {
+            placeBallFreestyleAt(freestylePose);
+          } else {
+            entity.initial.x = freestylePose.x;
+            entity.initial.y = freestylePose.y;
+            entity.initial.rotation = freestylePose.rotation;
+            if (entity.type === 'boat') retargetBallRouteForLinkedBoat(drag.entityId);
+            if (!claimBallPossessionImmediate(drag.entityId, freestylePose, drag.ballRefPose)) {
+              restoreBallSnapPreview(drag);
+            }
           }
+          syncCurrentStepPoses();
           recomputeAllSegmentDurations();
           state.tactic.updatedAt = new Date().toISOString();
         }
@@ -6403,7 +7566,18 @@
       }
 
       if (drag.mode === 'bend') {
+        var bendWasTap = !drag.historyRecorded;
         updateSegmentControlPoint(drag.entityId, meters);
+        if (bendWasTap) {
+          lastBendTap = {
+            entityId: drag.entityId,
+            x: point.x,
+            y: point.y,
+            time: Date.now(),
+          };
+        } else {
+          lastBendTap = null;
+        }
         state.drag = null;
         releaseCapture(event);
         renderAll();
@@ -6468,6 +7642,12 @@
         state.drag = null;
         state.pendingPointer = null;
         canvas.classList.remove('dragging');
+        // Pointer double-tap heeft de reset al gedaan; voorkom dubbele history.
+        if (bendResetAt && Date.now() - bendResetAt < 600) {
+          bendResetAt = 0;
+          return;
+        }
+        lastBendTap = null;
         resetSegmentBend(bendEntityId);
         return;
       }
@@ -6569,7 +7749,13 @@
       loadPredefinedFlow(button.getAttribute('data-predefined-id'));
     });
     on('btn-goto-start', 'click', gotoStartPosition);
-    on('btn-export-tactic', 'click', exportTactic);
+    on('btn-share-tactic', 'click', openShareDialog);
+    on('btn-close-share', 'click', closeShareDialog);
+    on('btn-share-copy-url', 'click', shareTacticLink);
+    on('btn-share-export', 'click', exportTacticFromShare);
+    on('share-backdrop', 'click', function (event) {
+      if (event.target.id === 'share-backdrop') closeShareDialog();
+    });
     on('btn-export-cancel', 'click', closeExportDialog);
     on('btn-export-confirm', 'click', confirmExportTactic);
     on('export-name-input', 'keydown', function (event) {
@@ -6645,6 +7831,10 @@
         closePredefinedDialog();
         return;
       }
+      if (event.key === 'Escape' && isShareDialogOpen()) {
+        closeShareDialog();
+        return;
+      }
       if (event.key === 'Escape' && isExportDialogOpen()) {
         closeExportDialog();
         return;
@@ -6689,7 +7879,7 @@
       }
 
       if (isTypingTarget(event.target)) return;
-      if (isExportDialogOpen()) return;
+      if (isExportDialogOpen() || isShareDialogOpen()) return;
 
       var key = event.key;
       var lower = key.length === 1 ? key.toLowerCase() : key;
@@ -6723,7 +7913,7 @@
       }
       if (mod && lower === 's') {
         event.preventDefault();
-        if (canEdit() && hasPlayableSteps()) exportTactic();
+        if (hasPlayableSteps()) openShareDialog();
         return;
       }
       if (mod && lower === 'o') {
@@ -6923,9 +8113,6 @@
       if (isPredefinedDialogOpen()) renderPredefinedList();
       renderAll();
     };
-    if (window.location.hash) {
-      history.replaceState(null, '', window.location.pathname + window.location.search);
-    }
     var stored = loadStoredTactic();
     if (stored) state.tactic = stored;
     else state.tactic = createInitialTactic();
@@ -6934,6 +8121,7 @@
     setupCanvasResizeObserver();
     syncStepsSheetLayout();
     renderAll();
+    consumeShareHashIfPresent();
     // Second pass after flex/sheet layout so the canvas isn't stuck at 0×CSS size.
     requestAnimationFrame(function () {
       renderCanvas();

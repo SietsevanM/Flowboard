@@ -186,6 +186,13 @@ button:disabled {
   transform: translateY(0);
 }
 
+.message.is-emphasis {
+  border-color: rgba(34, 211, 238, 0.55);
+  background: rgba(8, 47, 73, 0.96);
+  color: #ecfeff;
+  font-weight: 600;
+}
+
 .field-stage {
   position: relative;
   flex: 1;
@@ -411,6 +418,10 @@ button:disabled {
   padding: 10px 12px;
   font-size: 1rem;
   letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
+  hyphens: auto;
 }
 
 .steps-hint {
@@ -740,9 +751,11 @@ canvas.tool-active {
     grid-area: go;
     width: auto;
     min-width: 7.5rem;
+    max-width: 100%;
     min-height: 44px;
-    padding: 10px 16px;
+    padding: 10px 14px;
     justify-self: end;
+    font-size: 0.95rem;
   }
 
   .steps-panel.is-peek .sheet-expand-only {
@@ -796,11 +809,6 @@ canvas.tool-active {
   .btn-speed {
     width: 36px;
     height: 36px;
-  }
-
-  .btn-menu {
-    min-height: 44px;
-    padding: 10px 12px;
   }
 
   canvas {
@@ -1134,6 +1142,8 @@ canvas.tool-active {
     min-width: 0;
     order: 3;
     flex-shrink: 0;
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
   }
 
   .steps-panel.is-peek .sheet-expand-only {
@@ -1235,6 +1245,23 @@ canvas.tool-active {
 
 .export-panel {
   width: min(400px, 100%);
+}
+
+.share-panel {
+  width: min(400px, 100%);
+}
+
+.share-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.share-actions .btn {
+  width: 100%;
+  justify-content: flex-start;
+  white-space: normal;
+  text-align: left;
 }
 
 .predefined-panel {
@@ -1385,6 +1412,18 @@ canvas.tool-active {
   margin: 0 0 12px;
   font-size: 0.95rem;
   font-weight: 700;
+}
+
+.settings-section-heading .settings-section-title {
+  flex: 1;
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.settings-section-heading .btn {
+  flex-shrink: 0;
+  font-weight: 600;
 }
 
 .settings-section-heading:last-child {

@@ -5,8 +5,8 @@
    * Predefined / base flows for Flowboard.
    * To add a flow:
    * 1. Export from the app as .flowboard.json
-   * 2. Save a copy under predefined/ (optional, for reference)
-   * 3. Append an entry below with id, nameKey, and the full export JSON as payload
+   * 2. Append an entry below with id, nameKey, and the full export JSON as payload
+   * 3. Add a matching predefined.*.name key in i18n.js
    */
   global.FlowboardPredefinedFlows = [
   {
@@ -27,6 +27,7 @@
           "goalWidth": 1.5
         },
         "settings": {
+          "colorsLayout": "bow-stern",
           "fieldMode": "half",
           "showLine4m": false,
           "showLine6m": true,
@@ -52,8 +53,8 @@
           "attack": {
             "boatCount": 5,
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ]
           }
         },
@@ -138,10 +139,10 @@
             "type": "boat",
             "team": "attack",
             "label": "1",
-            "color": "#facc15",
+            "color": "#111111",
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ],
             "initial": {
               "x": 1.8190643256188674,
@@ -154,10 +155,10 @@
             "type": "boat",
             "team": "attack",
             "label": "2",
-            "color": "#facc15",
+            "color": "#111111",
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ],
             "initial": {
               "x": 6.778113191681831,
@@ -170,10 +171,10 @@
             "type": "boat",
             "team": "attack",
             "label": "3",
-            "color": "#facc15",
+            "color": "#111111",
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ],
             "initial": {
               "x": 7.183060649337726,
@@ -186,10 +187,10 @@
             "type": "boat",
             "team": "attack",
             "label": "4",
-            "color": "#facc15",
+            "color": "#111111",
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ],
             "initial": {
               "x": 7.475868811027373,
@@ -202,10 +203,10 @@
             "type": "boat",
             "team": "attack",
             "label": "5",
-            "color": "#facc15",
+            "color": "#111111",
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ],
             "initial": {
               "x": 4.329738563085418,
@@ -1189,6 +1190,7 @@
           "goalWidth": 1.5
         },
         "settings": {
+          "colorsLayout": "bow-stern",
           "fieldMode": "half",
           "showLine4m": false,
           "showLine6m": true,
@@ -1214,8 +1216,8 @@
           "attack": {
             "boatCount": 5,
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ]
           }
         },
@@ -1300,10 +1302,10 @@
             "type": "boat",
             "team": "attack",
             "label": "1",
-            "color": "#facc15",
+            "color": "#111111",
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ],
             "initial": {
               "x": 16.5,
@@ -1316,10 +1318,10 @@
             "type": "boat",
             "team": "attack",
             "label": "2",
-            "color": "#facc15",
+            "color": "#111111",
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ],
             "initial": {
               "x": 16.5,
@@ -1332,10 +1334,10 @@
             "type": "boat",
             "team": "attack",
             "label": "3",
-            "color": "#facc15",
+            "color": "#111111",
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ],
             "initial": {
               "x": 16.5,
@@ -1348,10 +1350,10 @@
             "type": "boat",
             "team": "attack",
             "label": "4",
-            "color": "#facc15",
+            "color": "#111111",
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ],
             "initial": {
               "x": 3.548051299326664,
@@ -1364,10 +1366,10 @@
             "type": "boat",
             "team": "attack",
             "label": "5",
-            "color": "#facc15",
+            "color": "#111111",
             "colors": [
-              "#facc15",
-              "#111111"
+              "#111111",
+              "#facc15"
             ],
             "initial": {
               "x": 3.4109821833955403,
