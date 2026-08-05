@@ -1,0 +1,34 @@
+---
+description: Bump minor (.x+1), update README/CHANGELOG on every commit or push
+alwaysApply: true
+---
+
+# Docs + version on commit / push
+
+When the user asks to **commit** and/or **push**, documentation and versioning are part of the same change set.
+
+## Versioning
+
+On **every** commit+push, bump the **minor** by one (`.x+1`):
+
+- `0.1` → `0.2`
+- `3.5` → `3.6`
+- Changelog form: `3.5.0` → `3.6.0` (patch stays `.0`)
+- README form: `Version 3.6` (no patch)
+
+Put today’s date on the new section (`## [X.Y.0] — YYYY-MM-DD`) and leave a fresh empty `## [Unreleased]` above it.
+
+**Major** bumps (`3.x` → `4.0`) are manual only — never invent a major bump unless the user asks.
+
+## Changelog + README
+
+1. Review the diff for user-facing impact.
+2. Move notes out of `[Unreleased]` into the new version section (Keep a Changelog: Added / Changed / Fixed / Removed). Write user-facing notes, not raw commit noise.
+3. Update **README.md** when capabilities, getting started, field usage, sharing, or the files table drift.
+4. Stage `README.md` and `CHANGELOG.md` with the same commit.
+5. For pure chores (comments, formatting-only), still bump minor and add a one-line **Changed** note; skip README edits if nothing user-facing changed.
+
+## Do not
+
+- Invent features that are not in the diff
+- Add Copilot / AI-tool attribution anywhere in docs or commit metadata

@@ -1,5 +1,7 @@
 # Flowboard
 
+**Version 0.2** — see [CHANGELOG.md](CHANGELOG.md).
+
 Flowboard is a standalone browser app for drawing and orchestrating canoe polo tactics. Coaches work with movement steps on a timeline instead of simulating physics.
 
 ## Getting started
@@ -7,38 +9,42 @@ Flowboard is a standalone browser app for drawing and orchestrating canoe polo t
 No installation and no server required:
 
 1. Open `index.html` directly in your browser.
-2. Drag boats and the ball on the field.
-3. Set ghost positions, then press **Save & Next Step** to save a step.
-4. Switch to **Play** to scrub and replay the tactic.
-5. Tactics are saved automatically in `localStorage`.
+2. Optionally load a predefined flow (**Select Flow**), or set your own start positions.
+3. Drag boats and the ball on the field to plan routes and throws.
+4. Press **Save & Next Step** to lock in a step.
+5. Switch to **Play** to scrub and replay the tactic as continuous motion.
+6. Tactics are saved automatically in `localStorage`. Share via URL or export as JSON.
 
 ## Capabilities
-
-Flowboard lets you design canoe polo plays as a sequence of steps and play them back as continuous motion.
 
 **Field & setup**
 
 - Full or half canoe polo field, with optional 4 m and 6 m lines
-- Configurable boat count and defending / attacking team colours
+- Configurable boat count; defending / attacking colours with a bow–stern split
 - Base formations (defence 1-3-1 or 1-2-2; attack on the centre line or in a fan)
 - Freely place and rotate boats for a custom start position
+- Predefined base flows to start from (**Waaier**, **Bommetje**)
 
 **Editing**
 
 - Drag boats to ghost targets, then confirm with **Save & Next Step** to lock in a step
-- Rename, delete, and reorder steps; jump back to the start of a step
+- Bend paths with diamond handles; turn in place; clear draft routes from the keyboard
+- Rename, delete, and reorder steps; revert boats to the start of a step
 - Undo / redo for editing mistakes
+- Keyboard shortcuts for almost every action (open **?** for the full list)
 
 **Playback**
 
 - Edit mode for building the play; Play mode for review
-- Transport bar with play / pause, scrubbing, and adjustable speed
+- Continuous multi-step motion with play / pause, scrubbing, and adjustable speed
 - Timing controls for boat speed, acceleration, rotation, ball speed, and step duration
+- Optional sync-arrival so boats finish a step together
 
 **Sharing & persistence**
 
 - Automatic save in `localStorage`
-- Export and import tactics as JSON
+- Share a play via URL (falls back to export when the link would be too long)
+- Export and import tactics as JSON (`.flowboard.json`)
 - UI in English, Dutch, German, French, Italian, and Spanish
 
 ## Using the field
@@ -50,10 +56,12 @@ Flowboard lets you design canoe polo plays as a sequence of steps and play them 
 - Clear a draft route with **X** / **Backspace** (with that boat selected), or turn in place with **T**.
 - Press **Save & Next Step** to animate all draft routes and save them as the next step.
 - In start-position mode, drag to move and click a boat to rotate, then **Lock in**.
+- Zoom with pinch (touch) or **Ctrl/Cmd + scroll**; when zoomed, drag empty field to pan. Double-click empty field to reset. Zoom works in Play mode too.
 
 ### Possession
 
 - The ball sticks to the current **holder**. Possession is tracked per step.
+- On touch/pen, press a player with the ball to choose **Move** (dribble) or **Throw** — slide into the option, or tap after the menu sticks.
 - Route a boat onto the free ball (or near it) to **claim** possession on arrival.
 - While a holder paddles with the ball, playback shows a **dribble**: short ahead throws along the boat’s path, then the ball is carried again near the end of the drive.
 - A free throw into open space releases possession until someone claims the ball again.
@@ -70,6 +78,13 @@ Drag the ball on the field — where you drop it decides the throw type:
 | **Throw** | Drag the ball onto empty field | Free throw to a point; possession is released |
 
 Pass routes are colour-coded on the canvas (direct, into-route, into-space, and free) so you can tell throw types apart while editing.
+
+### Sharing
+
+- Open **Share** to copy a URL that loads the current play, or export a `.flowboard.json` file.
+- If the encoded link is too long for the browser, use **Export** instead and share the file.
+- **Import** (from Select Flow or via shortcut) loads a previously exported play.
+
 ## Files
 
 | File | Purpose |
@@ -78,3 +93,6 @@ Pass routes are colour-coded on the canvas (direct, into-route, into-space, and 
 | `style.css` | Styling |
 | `app.js` | Editor, playback engine, and storage |
 | `i18n.js` | Translations |
+| `favicon.svg` | App icon |
+| `predefined/catalog.js` | Bundled base flows |
+| `CHANGELOG.md` | Release history |

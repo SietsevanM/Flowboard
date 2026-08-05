@@ -60,6 +60,12 @@
   var canvas = document.getElementById('field-canvas');
   var ctx = canvas.getContext('2d');
   var fieldScale = 28;
+  // User zoom/pan on top of auto fit-to-view (pinch on touch, ctrl/trackpad wheel).
+  var viewZoom = 1;
+  var viewPanX = 0;
+  var viewPanY = 0;
+  var VIEW_ZOOM_MIN = 1;
+  var VIEW_ZOOM_MAX = 3.5;
 
   function uuid() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -672,6 +678,7 @@
     history: { past: [], future: [] },
     drag: null,
     pendingPointer: null,
+    possessionMenu: null,
     tool: null,
     startPoseEdit: false,
     settingsOpen: false,
@@ -687,6 +694,9 @@
 
   var DRAG_THRESHOLD_PX = 8;
   var START_POSE_DRAG_THRESHOLD_PX = 16;
+  var POSSESSION_MENU_COMMIT_PX = 36;
+  var POSSESSION_MENU_HOVER_PX = 18;
+  var POSSESSION_MENU_HIT_PAD = 14;
   var PHONE_LAYOUT_MQ = '(max-width: 1024px) and (orientation: portrait)';
   var PHONE_LANDSCAPE_MQ = '(orientation: landscape) and (max-height: 560px) and (pointer: coarse)';
   var SHEET_PEEK_PX = 118;
@@ -788,8 +798,139 @@
     }
     state.drag = null;
     state.pendingPointer = null;
+    closePossessionMenu();
     clearTool();
     canvas.classList.remove('dragging');
+  }
+
+  function shouldUsePossessionMenu(event) {
+    if (!event) return isPhoneLayout();
+    return event.pointerType === 'touch' || event.pointerType === 'pen' || isPhoneLayout();
+  }
+
+  function getPossessionMenuEl() {
+    return document.getElementById('possession-menu');
+  }
+
+  function setPossessionMenuHot(action) {
+    var menu = getPossessionMenuEl();
+    if (!menu) return;
+    menu.querySelectorAll('[data-action]').forEach(function (btn) {
+      btn.classList.toggle('is-hot', btn.getAttribute('data-action') === action);
+    });
+    if (state.possessionMenu) state.possessionMenu.hoverAction = action || null;
+  }
+
+  function closePossessionMenu() {
+    state.possessionMenu = null;
+    var menu = getPossessionMenuEl();
+    if (!menu) return;
+    menu.classList.add('hidden');
+    menu.classList.remove('is-sticky', 'is-below');
+    menu.setAttribute('aria-hidden', 'true');
+    menu.querySelectorAll('[data-action]').forEach(function (btn) {
+      btn.classList.remove('is-hot');
+    });
+  }
+
+  function positionPossessionMenu(clientX, clientY) {
+    var menu = getPossessionMenuEl();
+    var wrap = canvas && canvas.parentElement;
+    if (!menu || !wrap) return;
+    var wrapRect = wrap.getBoundingClientRect();
+    menu.classList.remove('hidden');
+    var menuWidth = menu.offsetWidth || 220;
+    var menuHeight = menu.offsetHeight || 60;
+    var x = clientX - wrapRect.left;
+    var y = clientY - wrapRect.top;
+    var left = Math.max(menuWidth / 2 + 8, Math.min(wrapRect.width - menuWidth / 2 - 8, x));
+    var placeBelow = y - menuHeight - 28 < 8;
+    menu.classList.toggle('is-below', placeBelow);
+    menu.style.left = left + 'px';
+    menu.style.top = y + 'px';
+  }
+
+  function openPossessionMenu(ballPick, event) {
+    state.possessionMenu = {
+      holderId: ballPick.holderId,
+      startPose: clone(ballPick.startPose),
+      originClientX: event.clientX,
+      originClientY: event.clientY,
+      sticky: false,
+      hoverAction: null,
+    };
+    var menu = getPossessionMenuEl();
+    if (menu) {
+      menu.classList.remove('is-sticky');
+      menu.setAttribute('aria-hidden', 'false');
+    }
+    positionPossessionMenu(event.clientX, event.clientY);
+    setPossessionMenuHot(null);
+  }
+
+  function hitTestPossessionMenuButton(clientX, clientY) {
+    var menu = getPossessionMenuEl();
+    if (!menu || menu.classList.contains('hidden')) return null;
+    var buttons = menu.querySelectorAll('[data-action]');
+    var pad = POSSESSION_MENU_HIT_PAD;
+    for (var i = 0; i < buttons.length; i++) {
+      var btn = buttons[i];
+      var rect = btn.getBoundingClientRect();
+      if (
+        clientX >= rect.left - pad
+        && clientX <= rect.right + pad
+        && clientY >= rect.top - pad
+        && clientY <= rect.bottom + pad
+      ) {
+        return btn.getAttribute('data-action');
+      }
+    }
+    return null;
+  }
+
+  function resolvePossessionMenuAction(clientX, clientY, commit) {
+    var menu = state.possessionMenu;
+    if (!menu) return null;
+    var hit = hitTestPossessionMenuButton(clientX, clientY);
+    if (hit) return hit;
+    var dx = clientX - menu.originClientX;
+    var dy = clientY - menu.originClientY;
+    var dist = Math.hypot(dx, dy);
+    var minDist = commit ? POSSESSION_MENU_COMMIT_PX : POSSESSION_MENU_HOVER_PX;
+    if (dist < minDist) return null;
+    // Need a clear left/right bias so sliding straight into the gap doesn't snap.
+    if (Math.abs(dx) < minDist * 0.35) return null;
+    return dx < 0 ? 'move' : 'throw';
+  }
+
+  function commitPossessionMenuSticky(action) {
+    var menu = state.possessionMenu;
+    if (!menu || !action) return;
+    var holderId = menu.holderId;
+    closePossessionMenu();
+    clearTool();
+    collapseStepsSheet();
+    if (action === 'throw') {
+      setKeyboardFocus('ball');
+      startBoatTool('pass', 'ball');
+      return;
+    }
+    setKeyboardFocus(holderId);
+    startBoatTool('vaar', holderId);
+  }
+
+  function setupPossessionMenu() {
+    var menu = getPossessionMenuEl();
+    if (!menu) return;
+    menu.addEventListener('pointerdown', function (event) {
+      event.stopPropagation();
+    });
+    menu.addEventListener('click', function (event) {
+      var btn = event.target.closest('[data-action]');
+      if (!btn || !state.possessionMenu || !state.possessionMenu.sticky) return;
+      event.preventDefault();
+      commitPossessionMenuSticky(btn.getAttribute('data-action'));
+    });
   }
 
   function clearEntityRoute(entityId) {
@@ -1423,6 +1564,7 @@
       { titleKey: 'help.guide.pass.title', bodyKey: 'help.guide.pass.body' },
       { titleKey: 'help.guide.vaarlijn.title', bodyKey: 'help.guide.vaarlijn.body' },
       { titleKey: 'help.guide.pickup.title', bodyKey: 'help.guide.pickup.body' },
+      { titleKey: 'help.guide.zoom.title', bodyKey: 'help.guide.zoom.body' },
     ];
   }
 
@@ -2774,6 +2916,65 @@
     var scaleW = (availW - pad * 2) / size.width;
     var scaleH = (availH - pad * 2) / size.height;
     fieldScale = Math.max(10, Math.min(scaleW, scaleH));
+  }
+
+  function isViewZoomed() {
+    return viewZoom > 1.01;
+  }
+
+  function clampViewPan() {
+    if (viewZoom <= VIEW_ZOOM_MIN) {
+      viewZoom = VIEW_ZOOM_MIN;
+      viewPanX = 0;
+      viewPanY = 0;
+      return;
+    }
+    var wrap = canvas.parentElement;
+    if (!wrap) return;
+    var layoutW = canvas.offsetWidth || canvas.width;
+    var layoutH = canvas.offsetHeight || canvas.height;
+    var overflowX = Math.max(0, (layoutW * viewZoom - wrap.clientWidth) / 2);
+    var overflowY = Math.max(0, (layoutH * viewZoom - wrap.clientHeight) / 2);
+    var slack = 32;
+    viewPanX = clamp(viewPanX, -overflowX - slack, overflowX + slack);
+    viewPanY = clamp(viewPanY, -overflowY - slack, overflowY + slack);
+  }
+
+  function applyViewTransform() {
+    clampViewPan();
+    if (!isViewZoomed() && Math.abs(viewPanX) < 0.5 && Math.abs(viewPanY) < 0.5) {
+      viewZoom = 1;
+      viewPanX = 0;
+      viewPanY = 0;
+      canvas.style.transform = '';
+      canvas.classList.remove('is-zoomed');
+      return;
+    }
+    canvas.style.transform =
+      'translate(' + viewPanX + 'px, ' + viewPanY + 'px) scale(' + viewZoom + ')';
+    canvas.classList.add('is-zoomed');
+  }
+
+  function resetViewTransform() {
+    viewZoom = 1;
+    viewPanX = 0;
+    viewPanY = 0;
+    applyViewTransform();
+  }
+
+  function zoomViewAtClientPoint(clientX, clientY, newZoom) {
+    var wrap = canvas.parentElement;
+    if (!wrap) return;
+    var nextZoom = clamp(newZoom, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX);
+    if (nextZoom === viewZoom) return;
+    var wrapRect = wrap.getBoundingClientRect();
+    var centerX = wrapRect.left + wrapRect.width / 2;
+    var centerY = wrapRect.top + wrapRect.height / 2;
+    var ratio = nextZoom / viewZoom;
+    viewPanX = clientX - centerX - (clientX - centerX - viewPanX) * ratio;
+    viewPanY = clientY - centerY - (clientY - centerY - viewPanY) * ratio;
+    viewZoom = nextZoom;
+    applyViewTransform();
   }
 
   function metersToCanvas(pose) {
@@ -6065,6 +6266,7 @@
     }
 
     drawConfetti();
+    applyViewTransform();
   }
 
   function createSelect(label, value, options, onChange) {
@@ -7118,18 +7320,100 @@
     // Double-tap/klik op de knik-handle reset de bocht (ook op touch, naast dblclick).
     var lastBendTap = null;
     var bendResetAt = 0;
+    var activePointers = new Map();
+    var pinch = null;
+    var pinchEndedAt = 0;
 
     function releaseCapture(event) {
       canvas.classList.remove('dragging');
       try { canvas.releasePointerCapture(event.pointerId); } catch (err) { /* noop */ }
     }
 
+    function getPinchInfo() {
+      if (activePointers.size < 2) return null;
+      var points = [];
+      activePointers.forEach(function (point) { points.push(point); });
+      var dx = points[1].x - points[0].x;
+      var dy = points[1].y - points[0].y;
+      return {
+        dist: Math.hypot(dx, dy),
+        midX: (points[0].x + points[1].x) / 2,
+        midY: (points[0].y + points[1].y) / 2,
+      };
+    }
+
+    function beginPinch() {
+      var info = getPinchInfo();
+      if (!info || info.dist < 8) return;
+      state.drag = null;
+      state.pendingPointer = null;
+      closePossessionMenu();
+      canvas.classList.remove('dragging');
+      pinch = {
+        startDist: info.dist,
+        startZoom: viewZoom,
+        startPanX: viewPanX,
+        startPanY: viewPanY,
+        startMidX: info.midX,
+        startMidY: info.midY,
+      };
+    }
+
+    function updatePinch() {
+      if (!pinch) return;
+      var info = getPinchInfo();
+      if (!info || info.dist < 8) return;
+      var wrap = canvas.parentElement;
+      if (!wrap) return;
+      var wrapRect = wrap.getBoundingClientRect();
+      var centerX = wrapRect.left + wrapRect.width / 2;
+      var centerY = wrapRect.top + wrapRect.height / 2;
+      var newZoom = clamp(
+        pinch.startZoom * (info.dist / pinch.startDist),
+        VIEW_ZOOM_MIN,
+        VIEW_ZOOM_MAX
+      );
+      var zoomRatio = newZoom / pinch.startZoom;
+      viewZoom = newZoom;
+      viewPanX = info.midX - centerX - (pinch.startMidX - centerX - pinch.startPanX) * zoomRatio;
+      viewPanY = info.midY - centerY - (pinch.startMidY - centerY - pinch.startPanY) * zoomRatio;
+      applyViewTransform();
+    }
+
+    function endPinchGesture() {
+      if (!pinch) return;
+      pinch = null;
+      pinchEndedAt = Date.now();
+      state.drag = null;
+      state.pendingPointer = null;
+      closePossessionMenu();
+      canvas.classList.remove('dragging');
+      applyViewTransform();
+    }
+
+    function recentlyPinched() {
+      return Date.now() - pinchEndedAt < 350;
+    }
+
     function promotePending(event) {
       var pending = state.pendingPointer;
-      if (!pending || pending.kind === 'select') return false;
+      if (!pending || pending.kind === 'select' || pending.kind === 'possession-choice') return false;
 
       collapseStepsSheet();
       state.pendingPointer = null;
+
+      if (pending.kind === 'view-pan') {
+        state.drag = {
+          mode: 'view-pan',
+          startPanX: pending.startPanX,
+          startPanY: pending.startPanY,
+          clientX: pending.clientX,
+          clientY: pending.clientY,
+        };
+        canvas.classList.add('dragging');
+        applyDragMove(event);
+        return true;
+      }
 
       if (pending.kind === 'freestyle') {
         var freestyleEntity = state.tactic.entities.find(function (item) {
@@ -7197,8 +7481,65 @@
       return true;
     }
 
+    function commitPossessionMenuDrag(action, event) {
+      var menu = state.possessionMenu;
+      var pending = state.pendingPointer;
+      if (!menu || !action) return false;
+      var holderId = menu.holderId;
+      var startPose = clone(menu.startPose);
+      closePossessionMenu();
+      state.pendingPointer = null;
+      clearTool();
+      collapseStepsSheet();
+
+      if (action === 'throw') {
+        setKeyboardFocus('ball');
+        state.drag = {
+          mode: 'ball-route',
+          startPose: startPose,
+          holderId: holderId,
+          previewPose: null,
+        };
+      } else {
+        setKeyboardFocus(holderId);
+        var segment = getPrimarySegment(holderId);
+        if (segment) {
+          recordHistory();
+          state.drag = {
+            mode: 'ghost',
+            entityId: holderId,
+            startPose: clone(segment.startPose),
+            previewPose: clone(segment.endPose),
+            keptRotation: segment.endPose.rotation,
+          };
+        } else {
+          var poses = getPosesAtTime();
+          var boatStart = poses[holderId]
+            || (pending && pending.startPose)
+            || startPose;
+          state.drag = {
+            mode: 'route',
+            entityId: holderId,
+            startPose: clone(boatStart),
+          };
+        }
+      }
+
+      canvas.classList.add('dragging');
+      applyDragMove(event);
+      return true;
+    }
+
     function applyDragMove(event) {
       if (!state.drag) return;
+
+      if (state.drag.mode === 'view-pan') {
+        viewPanX = state.drag.startPanX + (event.clientX - state.drag.clientX);
+        viewPanY = state.drag.startPanY + (event.clientY - state.drag.clientY);
+        applyViewTransform();
+        return;
+      }
+
       var point = pointerToCanvas(event);
       var entity = state.tactic.entities.find(function (item) { return item.id === state.drag.entityId; });
 
@@ -7285,7 +7626,38 @@
     }
 
     function onPointerDown(event) {
-      if (!canEdit()) return;
+      activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+      if (activePointers.size >= 2) {
+        beginPinch();
+        try { canvas.setPointerCapture(event.pointerId); } catch (err) { /* noop */ }
+        return;
+      }
+
+      if (recentlyPinched()) return;
+
+      if (state.possessionMenu && state.possessionMenu.sticky) {
+        closePossessionMenu();
+      }
+
+      // Allow pan/zoom inspection while playing; other edits stay locked.
+      if (!canEdit()) {
+        if (isViewZoomed()) {
+          state.pendingPointer = {
+            kind: 'view-pan',
+            x: 0,
+            y: 0,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            startPanX: viewPanX,
+            startPanY: viewPanY,
+            pointerId: event.pointerId,
+          };
+          try { canvas.setPointerCapture(event.pointerId); } catch (err) { /* noop */ }
+        }
+        return;
+      }
+
       var point = pointerToCanvas(event);
       var x = point.x;
       var y = point.y;
@@ -7339,6 +7711,22 @@
         if (ballPick) {
           clearTool();
           collapseStepsSheet();
+          if (ballPick.holderId && shouldUsePossessionMenu(event)) {
+            openPossessionMenu(ballPick, event);
+            state.pendingPointer = {
+              kind: 'possession-choice',
+              holderId: ballPick.holderId,
+              startPose: clone(ballPick.startPose),
+              x: x,
+              y: y,
+              clientX: event.clientX,
+              clientY: event.clientY,
+              pointerId: event.pointerId,
+            };
+            canvas.setPointerCapture(event.pointerId);
+            renderCanvas();
+            return;
+          }
           state.pendingPointer = {
             kind: 'ball-route',
             startPose: clone(ballPick.startPose),
@@ -7373,6 +7761,20 @@
 
       var entityId = getEntityAtCanvasPoint(x, y);
       if (!entityId) {
+        if (isViewZoomed()) {
+          state.pendingPointer = {
+            kind: 'view-pan',
+            x: x,
+            y: y,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            startPanX: viewPanX,
+            startPanY: viewPanY,
+            pointerId: event.pointerId,
+          };
+          canvas.setPointerCapture(event.pointerId);
+          return;
+        }
         clearTool();
         state.keyboardFocusEntityId = null;
         renderAll();
@@ -7443,6 +7845,16 @@
     }
 
     function onPointerMove(event) {
+      if (activePointers.has(event.pointerId)) {
+        activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      }
+
+      if (pinch || activePointers.size >= 2) {
+        if (!pinch && activePointers.size >= 2) beginPinch();
+        updatePinch();
+        return;
+      }
+
       if (state.tool) {
         updateToolPreview(pointerToCanvas(event));
         return;
@@ -7451,7 +7863,16 @@
       if (state.pendingPointer) {
         var pending = state.pendingPointer;
         var point = pointerToCanvas(event);
-        var dist = Math.hypot(point.x - pending.x, point.y - pending.y);
+        if (pending.kind === 'possession-choice') {
+          var hoverAction = resolvePossessionMenuAction(event.clientX, event.clientY, false);
+          setPossessionMenuHot(hoverAction);
+          var commitAction = resolvePossessionMenuAction(event.clientX, event.clientY, true);
+          if (commitAction) commitPossessionMenuDrag(commitAction, event);
+          return;
+        }
+        var dist = pending.kind === 'view-pan'
+          ? Math.hypot(event.clientX - pending.clientX, event.clientY - pending.clientY)
+          : Math.hypot(point.x - pending.x, point.y - pending.y);
         var threshold = pending.kind === 'freestyle'
           ? START_POSE_DRAG_THRESHOLD_PX
           : DRAG_THRESHOLD_PX;
@@ -7467,6 +7888,23 @@
     }
 
     function onPointerUp(event) {
+      activePointers.delete(event.pointerId);
+
+      if (pinch) {
+        if (activePointers.size < 2) {
+          endPinchGesture();
+        }
+        releaseCapture(event);
+        return;
+      }
+
+      if (recentlyPinched()) {
+        state.drag = null;
+        state.pendingPointer = null;
+        releaseCapture(event);
+        return;
+      }
+
       if (state.tool && state.tool.confirmOnUp) {
         var confirmPoint = pointerToCanvas(event);
         var aimMoved = state.tool.aimStartX != null
@@ -7483,6 +7921,28 @@
         var pending = state.pendingPointer;
         state.pendingPointer = null;
         releaseCapture(event);
+        if (pending.kind === 'possession-choice') {
+          if (event.type === 'pointercancel') {
+            closePossessionMenu();
+            renderAll();
+            return;
+          }
+          if (state.possessionMenu) {
+            state.possessionMenu.sticky = true;
+            var possessionEl = getPossessionMenuEl();
+            if (possessionEl) possessionEl.classList.add('is-sticky');
+            setPossessionMenuHot(null);
+          }
+          setKeyboardFocus(pending.holderId);
+          renderAll();
+          return;
+        }
+        if (pending.kind === 'view-pan') {
+          clearTool();
+          state.keyboardFocusEntityId = null;
+          renderAll();
+          return;
+        }
         if (state.startPoseEdit && pending.kind === 'freestyle') {
           var pendingEntity = state.tactic.entities.find(function (item) {
             return item.id === pending.entityId;
@@ -7506,6 +7966,14 @@
 
       if (!state.drag) return;
       var drag = state.drag;
+
+      if (drag.mode === 'view-pan') {
+        state.drag = null;
+        releaseCapture(event);
+        applyViewTransform();
+        return;
+      }
+
       var point = pointerToCanvas(event);
       var meters = canvasToMeters(point.x, point.y, drag.startPose ? drag.startPose.rotation : 0);
       var entity = state.tactic.entities.find(function (item) { return item.id === drag.entityId; });
@@ -7633,6 +8101,13 @@
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', onPointerUp);
+    canvas.addEventListener('wheel', function (event) {
+      // Trackpad pinch (ctrl+wheel) and ctrl/meta+scroll zoom the field.
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      var factor = Math.exp(-event.deltaY * 0.01);
+      zoomViewAtClientPoint(event.clientX, event.clientY, viewZoom * factor);
+    }, { passive: false });
     canvas.addEventListener('dblclick', function (event) {
       if (!canEdit()) return;
       var point = pointerToCanvas(event);
@@ -7652,7 +8127,13 @@
         return;
       }
       var ghostEntityId = getGhostAtCanvasPoint(point.x, point.y);
-      if (!ghostEntityId || !getPrimarySegment(ghostEntityId)) return;
+      if (!ghostEntityId || !getPrimarySegment(ghostEntityId)) {
+        if (isViewZoomed()) {
+          event.preventDefault();
+          resetViewTransform();
+        }
+        return;
+      }
       event.preventDefault();
       state.drag = null;
       state.pendingPointer = null;
@@ -7847,6 +8328,13 @@
       if (event.key === 'Escape' && state.playbackMode) {
         event.preventDefault();
         exitPlaybackMode();
+        return;
+      }
+      if (event.key === 'Escape' && state.possessionMenu) {
+        event.preventDefault();
+        closePossessionMenu();
+        state.pendingPointer = null;
+        renderAll();
         return;
       }
       if (event.key === 'Escape' && state.tool && state.tool.mode === 'vaarlijn' && state.tool.phase === 'receiver') {
@@ -8117,6 +8605,7 @@
     if (stored) state.tactic = stored;
     else state.tactic = createInitialTactic();
     setupCanvasDrag();
+    setupPossessionMenu();
     setupEvents();
     setupCanvasResizeObserver();
     syncStepsSheetLayout();

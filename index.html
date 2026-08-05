@@ -76,6 +76,20 @@
     <div class="field-stage">
       <div class="canvas-wrap">
         <canvas id="field-canvas" width="800" height="600"></canvas>
+        <div
+          id="possession-menu"
+          class="possession-menu hidden"
+          role="menu"
+          aria-hidden="true"
+          data-i18n-aria="possession.menu.aria"
+        >
+          <button type="button" class="possession-menu-btn" data-action="move" role="menuitem" data-i18n="possession.move">
+            Move
+          </button>
+          <button type="button" class="possession-menu-btn" data-action="throw" role="menuitem" data-i18n="possession.throw">
+            Throw
+          </button>
+        </div>
       </div>
       <aside id="steps-panel" class="steps-panel is-peek" data-i18n-aria="steps.panel.aria">
         <button
