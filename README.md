@@ -1,6 +1,6 @@
 # Flowboard
 
-**Version 0.2** — see [CHANGELOG.md](CHANGELOG.md).
+**Version 0.3** — see [CHANGELOG.md](CHANGELOG.md).
 
 Flowboard is a standalone browser app for drawing and orchestrating canoe polo tactics. Coaches work with movement steps on a timeline instead of simulating physics.
 
@@ -13,7 +13,7 @@ No installation and no server required:
 3. Drag boats and the ball on the field to plan routes and throws.
 4. Press **Save & Next Step** to lock in a step.
 5. Switch to **Play** to scrub and replay the tactic as continuous motion.
-6. Tactics are saved automatically in `localStorage`. Share via URL or export as JSON.
+6. Tactics are saved automatically in `localStorage`. Share via URL, QR code, or export as JSON.
 
 ## Capabilities
 
@@ -43,7 +43,7 @@ No installation and no server required:
 **Sharing & persistence**
 
 - Automatic save in `localStorage`
-- Share a play via URL (falls back to export when the link would be too long)
+- Share a play via URL or QR code (falls back to export when the link would be too long)
 - Export and import tactics as JSON (`.flowboard.json`)
 - UI in English, Dutch, German, French, Italian, and Spanish
 
@@ -81,8 +81,8 @@ Pass routes are colour-coded on the canvas (direct, into-route, into-space, and 
 
 ### Sharing
 
-- Open **Share** to copy a URL that loads the current play, or export a `.flowboard.json` file.
-- If the encoded link is too long for the browser, use **Export** instead and share the file.
+- Open **Share** to copy a URL, show a QR code (when the link fits), or export a `.flowboard.json` file.
+- If the encoded link is too long for a QR or for the browser, use **Copy URL** or **Export** instead.
 - **Import** (from Select Flow or via shortcut) loads a previously exported play.
 
 ## Files
@@ -93,6 +93,7 @@ Pass routes are colour-coded on the canvas (direct, into-route, into-space, and 
 | `style.css` | Styling |
 | `app.js` | Editor, playback engine, and storage |
 | `i18n.js` | Translations |
+| `vendor/qrcode.js` | Offline QR encoder for share links |
 | `favicon.svg` | App icon |
 | `predefined/catalog.js` | Bundled base flows |
 | `CHANGELOG.md` | Release history |

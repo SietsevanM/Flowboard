@@ -186,10 +186,24 @@
         <button type="button" class="btn btn-toolbar" id="btn-share-copy-url" data-i18n="share.copyUrl" disabled>
           Copy URL
         </button>
+        <button type="button" class="btn btn-toolbar" id="btn-share-qr" data-i18n="share.showQr" disabled>
+          Show QR
+        </button>
         <button type="button" class="btn btn-toolbar" id="btn-share-export" data-i18n="settings.export">
           Export
         </button>
       </div>
+    </div>
+  </div>
+
+  <div id="qr-backdrop" class="settings-backdrop qr-backdrop hidden">
+    <div class="settings-panel panel qr-panel" role="dialog" aria-labelledby="qr-title" aria-modal="true">
+      <div class="settings-head qr-head">
+        <h2 id="qr-title" data-i18n="share.qr.title">QR code</h2>
+        <button type="button" class="btn" id="btn-close-qr" data-i18n="settings.close">Close</button>
+      </div>
+      <div id="qr-code" class="qr-code" aria-hidden="true"></div>
+      <p class="qr-hint" data-i18n="share.qr.hint">Scan with your phone camera</p>
     </div>
   </div>
 
@@ -238,14 +252,21 @@
         js.src = 'app.js?v=' + bust;
         document.body.appendChild(js);
       }
-      var catalog = document.createElement('script');
-      catalog.src = 'predefined/catalog.js?v=' + bust;
-      catalog.onload = loadApp;
-      catalog.onerror = function () {
-        window.FlowboardPredefinedFlows = window.FlowboardPredefinedFlows || [];
-        loadApp();
-      };
-      document.body.appendChild(catalog);
+      function loadCatalog() {
+        var catalog = document.createElement('script');
+        catalog.src = 'predefined/catalog.js?v=' + bust;
+        catalog.onload = loadApp;
+        catalog.onerror = function () {
+          window.FlowboardPredefinedFlows = window.FlowboardPredefinedFlows || [];
+          loadApp();
+        };
+        document.body.appendChild(catalog);
+      }
+      var qr = document.createElement('script');
+      qr.src = 'vendor/qrcode.js?v=' + bust;
+      qr.onload = loadCatalog;
+      qr.onerror = loadCatalog;
+      document.body.appendChild(qr);
     };
     document.body.appendChild(i18n);
   </script>

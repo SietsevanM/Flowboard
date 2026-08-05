@@ -1545,7 +1545,7 @@
   }
 
   function openShortcutsDialog() {
-    if (isExportDialogOpen() || isShareDialogOpen()) return;
+    if (isExportDialogOpen() || isShareDialogOpen() || isQrDialogOpen()) return;
     state.settingsOpen = false;
     renderSettings();
     state.shortcutsOpen = true;
@@ -4666,6 +4666,8 @@
   var SHARE_HASH_PREFIX_V1 = 'fb1.';
   // Soft limit so links stay usable in browsers and common messengers.
   var SHARE_URL_MAX_LENGTH = 4096;
+  // Near QR version 40 / ECC M capacity; denser codes need a large on-screen QR.
+  var SHARE_QR_MAX_LENGTH = 2300;
 
   var shareLinkState = {
     key: null,
@@ -5136,6 +5138,43 @@
     copyBtn.title = title;
   }
 
+  function shareUrlFitsQr(url) {
+    return !!url && url.length <= SHARE_QR_MAX_LENGTH;
+  }
+
+  function supportsQrShare() {
+    return typeof qrcode === 'function';
+  }
+
+  function updateShareQrButton() {
+    var qrBtn = document.getElementById('btn-share-qr');
+    if (!qrBtn) return;
+    var usable = !!shareLinkState.usable && !!shareLinkState.url;
+    var fitsQr = usable && shareUrlFitsQr(shareLinkState.url) && supportsQrShare();
+    qrBtn.disabled = !fitsQr;
+    var label = t('share.showQr');
+    var title = t('share.showQr.title');
+    if (!fitsQr) {
+      if (!supportsQrShare()) {
+        label = t('share.showQr.unavailable');
+        title = label;
+      } else if (shareLinkState.reason === 'unsupported') {
+        label = t('settings.share.unsupported');
+        title = label;
+      } else if (shareLinkState.reason === 'tooLong' || (usable && !shareUrlFitsQr(shareLinkState.url))) {
+        label = t('share.showQr.tooLong');
+        title = label;
+      } else if (shareLinkState.reason === 'pending') {
+        label = t('share.copyUrl.pending');
+        title = label;
+      } else {
+        title = label;
+      }
+    }
+    qrBtn.textContent = label;
+    qrBtn.title = title;
+  }
+
   function updateShareButton() {
     var shareBtn = document.getElementById('btn-share-tactic');
     if (!shareBtn) return;
@@ -5145,6 +5184,7 @@
     shareBtn.title = withShortcut(t('settings.share'), modShortcutLabel() + '+S');
     shareBtn.setAttribute('aria-label', shareBtn.title);
     updateShareCopyButton();
+    updateShareQrButton();
   }
 
   function applyShareLinkState(next) {
@@ -5228,6 +5268,63 @@
     return backdrop && !backdrop.classList.contains('hidden');
   }
 
+  function isQrDialogOpen() {
+    var backdrop = document.getElementById('qr-backdrop');
+    return backdrop && !backdrop.classList.contains('hidden');
+  }
+
+  function closeQrDialog() {
+    var backdrop = document.getElementById('qr-backdrop');
+    if (backdrop) backdrop.classList.add('hidden');
+    var holder = document.getElementById('qr-code');
+    if (holder) holder.innerHTML = '';
+  }
+
+  function buildShareQrSvg(url) {
+    if (!supportsQrShare()) return null;
+    try {
+      if (qrcode.stringToBytesFuncs && qrcode.stringToBytesFuncs['UTF-8']) {
+        qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+      }
+      var qr = qrcode(0, 'M');
+      qr.addData(url, 'Byte');
+      qr.make();
+      return qr.createSvgTag({
+        cellSize: 2,
+        margin: 4,
+        scalable: true,
+        alt: t('share.qr.title'),
+      });
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function openQrShareDialog() {
+    if (!shareLinkState.usable || !shareLinkState.url) return;
+    if (!shareUrlFitsQr(shareLinkState.url) || !supportsQrShare()) return;
+    var svg = buildShareQrSvg(shareLinkState.url);
+    if (!svg) {
+      updateShareQrButton();
+      setMessage(t('share.showQr.tooLong'));
+      return;
+    }
+    closeShareDialog();
+    closeExportDialog();
+    closePredefinedDialog();
+    closeShortcutsDialog();
+    state.settingsOpen = false;
+    renderSettings();
+    var holder = document.getElementById('qr-code');
+    var backdrop = document.getElementById('qr-backdrop');
+    if (!holder || !backdrop) return;
+    holder.innerHTML = svg;
+    if (typeof FlowboardI18n !== 'undefined' && FlowboardI18n.applyI18nToDOM) {
+      FlowboardI18n.applyI18nToDOM(backdrop);
+    }
+    backdrop.classList.remove('hidden');
+  }
+
   function closeShareDialog() {
     var backdrop = document.getElementById('share-backdrop');
     if (backdrop) backdrop.classList.add('hidden');
@@ -5235,6 +5332,7 @@
 
   function openShareDialog() {
     if (!hasPlayableSteps()) return;
+    closeQrDialog();
     closeExportDialog();
     closePredefinedDialog();
     closeShortcutsDialog();
@@ -5244,6 +5342,7 @@
     if (!backdrop) return;
     scheduleShareLinkRefresh();
     updateShareCopyButton();
+    updateShareQrButton();
     backdrop.classList.remove('hidden');
   }
 
@@ -5259,6 +5358,7 @@
 
   function exportTacticFromShare() {
     closeShareDialog();
+    closeQrDialog();
     exportTactic();
   }
 
@@ -5292,6 +5392,7 @@
     var input = document.getElementById('export-name-input');
     if (!backdrop || !input) return;
     closeShareDialog();
+    closeQrDialog();
     closePredefinedDialog();
     input.value = state.tactic.name || t('tactic.defaultName');
     backdrop.classList.remove('hidden');
@@ -5458,6 +5559,8 @@
   function openPredefinedDialog() {
     if (!canEdit() || !isOnStartStep()) return;
     closeExportDialog();
+    closeShareDialog();
+    closeQrDialog();
     closeShortcutsDialog();
     state.settingsOpen = false;
     renderSettings();
@@ -8205,6 +8308,8 @@
     on('btn-settings', 'click', function () {
       closeShortcutsDialog();
       closePredefinedDialog();
+      closeShareDialog();
+      closeQrDialog();
       state.settingsOpen = true;
       renderSettings();
     });
@@ -8233,9 +8338,14 @@
     on('btn-share-tactic', 'click', openShareDialog);
     on('btn-close-share', 'click', closeShareDialog);
     on('btn-share-copy-url', 'click', shareTacticLink);
+    on('btn-share-qr', 'click', openQrShareDialog);
     on('btn-share-export', 'click', exportTacticFromShare);
     on('share-backdrop', 'click', function (event) {
       if (event.target.id === 'share-backdrop') closeShareDialog();
+    });
+    on('btn-close-qr', 'click', closeQrDialog);
+    on('qr-backdrop', 'click', function (event) {
+      if (event.target.id === 'qr-backdrop') closeQrDialog();
     });
     on('btn-export-cancel', 'click', closeExportDialog);
     on('btn-export-confirm', 'click', confirmExportTactic);
@@ -8314,6 +8424,10 @@
       }
       if (event.key === 'Escape' && isShareDialogOpen()) {
         closeShareDialog();
+        return;
+      }
+      if (event.key === 'Escape' && isQrDialogOpen()) {
+        closeQrDialog();
         return;
       }
       if (event.key === 'Escape' && isExportDialogOpen()) {

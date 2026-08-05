@@ -9,6 +9,13 @@ During development, each commit+push bumps the **minor** (`.x+1`). **Major** rel
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-05
+
+### Added
+
+- Share dialog **Show QR** option: scannable QR code for share links that fit (falls back to Copy URL / Export when the play is too complex)
+- Offline QR encoder in `vendor/qrcode.js`
+
 ## [0.2.0] — 2026-08-05
 
 ### Added
